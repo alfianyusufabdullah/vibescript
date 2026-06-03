@@ -1,11 +1,17 @@
 import type { ExtensionMessage } from '../shared/types';
 import { callLLM } from '../shared/llm';
 
-// Set side panel behavior to open on action click
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.sidePanel
-    .setPanelBehavior({ openPanelOnActionClick: true })
-    .catch((error) => console.error('Error setting panel behavior:', error));
+// Toggle the offcanvas panel when extension icon is clicked
+chrome.action.onClicked.addListener((tab) => {
+  if (tab.id) {
+    chrome.tabs.sendMessage(tab.id, {
+      source: 'vibescript-background',
+      action: 'SIDE_PANEL_OPENED'
+    }).catch((err) => {
+      // Content script is not injected on non-matching pages
+      console.log('[VibeScript] Content script not active on this tab:', err.message);
+    });
+  }
 });
 
 // Handle LLM requests and other background actions

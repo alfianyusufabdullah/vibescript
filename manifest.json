@@ -6,8 +6,7 @@
   "permissions": [
     "activeTab",
     "scripting",
-    "storage",
-    "sidePanel"
+    "storage"
   ],
   "host_permissions": [
     "https://script.google.com/*"
@@ -19,7 +18,7 @@
   "content_scripts": [
     {
       "matches": ["https://script.google.com/*"],
-      "js": ["src/content/content.ts"],
+      "js": ["src/content/content.tsx"],
       "run_at": "document_idle"
     }
   ],
@@ -29,9 +28,6 @@
       "matches": ["https://script.google.com/*"]
     }
   ],
-  "side_panel": {
-    "default_path": "sidepanel.html"
-  },
   "action": {
     "default_title": "VibeScript Panel",
     "default_icon": "src/assets/icon-48.png"
