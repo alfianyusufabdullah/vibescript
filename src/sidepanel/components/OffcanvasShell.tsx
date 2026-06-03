@@ -154,7 +154,7 @@ export const OffcanvasShell: React.FC = () => {
       <header className="flex items-center justify-between px-4 py-3.5 bg-white border-b border-zinc-200">
         <div className="flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-zinc-700" />
-          <span className="text-xs font-bold tracking-tight text-zinc-900 font-sans">
+          <span className="text-xl font-bold tracking-tight text-zinc-900 font-sans">
             VibeScript
           </span>
         </div>
