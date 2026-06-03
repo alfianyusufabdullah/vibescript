@@ -11,7 +11,10 @@
 
   function getEditorContext() {
     const editor = getActiveEditor();
-    if (!editor) return null;
+    return editor ? contextFromEditor(editor) : null;
+  }
+
+  function contextFromEditor(editor) {
     const model = editor.getModel();
     if (!model) return null;
 
@@ -96,6 +99,108 @@
           text: event.data.payload.code,
           forceMoveMarkers: true
         }]);
+        break;
+      }
+
+      case 'LIST_FILES': {
+        const editorsList = monaco.editor.getEditors();
+        const files = editorsList.map((e) => {
+          const model = e.getModel();
+          return {
+            name: model ? model.uri.path.replace(/^\//, '') : 'untitled',
+            language: model ? model.getLanguageId() : 'unknown',
+            isActive: e.hasWidgetFocus()
+          };
+        });
+        window.postMessage({
+          source: 'vibescript-inject',
+          action: 'LIST_FILES_RESULT',
+          payload: { requestId: event.data.payload?.requestId, files }
+        }, '*');
+        break;
+      }
+
+      case 'READ_FILE_BY_NAME': {
+        const filename = event.data.payload?.filename;
+        const reqId = event.data.payload?.requestId;
+        const allEditors = monaco.editor.getEditors();
+        const target = allEditors.find((e) => {
+          const model = e.getModel();
+          return model && model.uri.path.includes(filename);
+        });
+        if (target) {
+          target.focus();
+          const ctx = contextFromEditor(target);
+          window.postMessage({
+            source: 'vibescript-inject',
+            action: 'CODE_RESULT',
+            payload: { requestId: reqId, context: ctx }
+          }, '*');
+        } else {
+          window.postMessage({
+            source: 'vibescript-inject',
+            action: 'CODE_RESULT',
+            payload: { requestId: reqId, context: null }
+          }, '*');
+        }
+        break;
+      }
+
+      case 'EDIT_FILE': {
+        if (!editor) return;
+        const model = editor.getModel();
+        if (!model) return;
+        const { search, replace, requestId } = event.data.payload;
+
+        // Use Monaco's findMatches for precise, unique match
+        const matches = model.findMatches(search, undefined, false, true, null, false, 5);
+
+        if (matches.length === 0) {
+          // Fallback: try String.replace in case findMatches API is incompatible
+          const fullText = model.getValue();
+          if (fullText.includes(search)) {
+            const newText = fullText.replace(search, replace);
+            if (newText !== fullText) {
+              editor.executeEdits('vibescript', [{
+                range: model.getFullModelRange(),
+                text: newText,
+                forceMoveMarkers: true
+              }]);
+              window.postMessage({
+                source: 'vibescript-inject',
+                action: 'EDIT_FILE_RESULT',
+                payload: { requestId, success: true, matchCount: 1 }
+              }, '*');
+              break;
+            }
+          }
+          window.postMessage({
+            source: 'vibescript-inject',
+            action: 'EDIT_FILE_RESULT',
+            payload: { requestId, success: false, error: 'No match found for the search text', matchCount: 0 }
+          }, '*');
+        } else if (matches.length > 1) {
+          const positions = matches.map(m => `line ${m.range.startLineNumber}`);
+          window.postMessage({
+            source: 'vibescript-inject',
+            action: 'EDIT_FILE_RESULT',
+            payload: {
+              requestId, success: false, matchCount: matches.length,
+              error: `Found ${matches.length} matches at ${positions.join(', ')}. Provide more surrounding context to make the search unique.`
+            }
+          }, '*');
+        } else {
+          editor.executeEdits('vibescript', [{
+            range: matches[0].range,
+            text: replace,
+            forceMoveMarkers: true
+          }]);
+          window.postMessage({
+            source: 'vibescript-inject',
+            action: 'EDIT_FILE_RESULT',
+            payload: { requestId, success: true, matchCount: 1 }
+          }, '*');
+        }
         break;
       }
     }
