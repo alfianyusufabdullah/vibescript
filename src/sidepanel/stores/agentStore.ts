@@ -51,11 +51,12 @@ export const useAgentStore = create<AgentState>((set) => ({
         }));
       },
       onDone: (response: string) => {
-        // Capture steps before they're lost on next run
-        const currentSteps = useAgentStore.getState().steps;
+        const state = useAgentStore.getState();
+        // Use accumulated streaming text (full conversation) when available,
+        // fall back to final response (e.g. when finish tool provides summary)
+        const content = state.streamingText || response;
         set({ status: 'done', finalResponse: response });
-        // Sync to chat history with tool execution steps
-        useChatStore.getState().addAgentResult(scriptId, response, currentSteps);
+        useChatStore.getState().addAgentResult(scriptId, content, state.steps);
         currentRuntime = null;
       },
       onError: (error: string) => {

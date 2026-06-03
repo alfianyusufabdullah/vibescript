@@ -6,6 +6,7 @@ import { useChatStore } from '../stores/chatStore';
 
 const MAX_STEPS = 25;
 const TOOL_TIMEOUT = 10_000;
+const DIFF_REVIEW_TIMEOUT = 300_000;
 const CONTEXT_WARN_RATIO = 0.7;
 const CONTEXT_CRITICAL_RATIO = 0.85;
 
@@ -23,6 +24,7 @@ export class AgentRuntime {
 
   cancel() {
     this.cancelled = true;
+    useEditorStore.getState().cancelDiffReview();
   }
 
   async run(
@@ -162,8 +164,15 @@ ${prompt}
         });
       }
 
+      // Check if user rejected the edit
+      const rejected = toolResults.some(r => r.error === 'USER_REJECTED');
+      if (rejected) {
+        callbacks.onDone('Changes rejected. Agent stopped.');
+        return;
+      }
+
       // After any edit/write, re-read file and inject fresh context
-      const modifiedFile = toolResults.some(r => r.name === 'edit_file' || r.name === 'write_file');
+      const modifiedFile = toolResults.some(r => r.name === 'edit_file');
       if (modifiedFile) {
         const fresh = await this.tryReadFile();
         if (fresh) {
@@ -315,8 +324,9 @@ ${prompt}
   }
 
   private async executeToolWithTimeout(tc: ToolCall): Promise<ToolResult> {
+    const timeout = tc.name === 'edit_file' ? DIFF_REVIEW_TIMEOUT : TOOL_TIMEOUT;
     const timeoutPromise = new Promise<ToolResult>((_, reject) =>
-      setTimeout(() => reject(new Error('Tool execution timed out')), TOOL_TIMEOUT)
+      setTimeout(() => reject(new Error('Tool execution timed out')), timeout)
     );
 
     try {
@@ -350,19 +360,6 @@ ${prompt}
         };
       }
 
-      case 'write_file': {
-        const code = tc.arguments?.code as string;
-        if (!code) {
-          return { toolCallId: tc.id, name: tc.name, success: false, output: '', error: 'Missing code argument' };
-        }
-        await editorStore.setCode(code);
-        return {
-          toolCallId: tc.id,
-          name: tc.name,
-          success: true,
-          output: `File replaced successfully (${code.length} chars)`
-        };
-      }
 
       case 'edit_file': {
         const search = tc.arguments?.search as string;
@@ -370,15 +367,21 @@ ${prompt}
         if (!search || replace === undefined) {
           return { toolCallId: tc.id, name: tc.name, success: false, output: '', error: 'Missing search or replace argument' };
         }
-        const result = await editorStore.editFile(search, replace);
+        const result = await editorStore.editFileWithReview(search, replace);
+        if (!result.approved) {
+          return {
+            toolCallId: tc.id,
+            name: tc.name,
+            success: false,
+            output: result.output,
+            error: 'USER_REJECTED'
+          };
+        }
         return {
           toolCallId: tc.id,
           name: tc.name,
-          success: result.success,
-          output: result.success
-            ? `Applied edit: replaced "${search}" with "${replace}"`
-            : '',
-          error: result.success ? undefined : (result.error || `Edit failed (${result.matchCount} matches found)`)
+          success: true,
+          output: `Applied edit: replaced "${search}" with "${replace}"`
         };
       }
 

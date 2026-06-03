@@ -13,6 +13,11 @@ interface EditFileResult {
   error?: string;
 }
 
+interface EditFileReviewResult {
+  approved: boolean;
+  output: string;
+}
+
 interface EditorState {
   currentContext: MonacoEditorContext | null;
   scriptId: string | null;
@@ -26,6 +31,9 @@ interface EditorState {
   listOpenFiles: () => Promise<FileInfo[]>;
   readFileByName: (filename: string) => Promise<MonacoEditorContext | null>;
   editFile: (search: string, replace: string) => Promise<EditFileResult>;
+  editFileWithReview: (search: string, replace: string) => Promise<EditFileReviewResult>;
+
+  cancelDiffReview: () => void;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -204,5 +212,42 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         resolve({ success: false, matchCount: 0, error: 'Timeout' });
       }, 2000);
     });
+  },
+
+  editFileWithReview: async (search: string, replace: string): Promise<EditFileReviewResult> => {
+    const requestId = Math.random().toString(36).substring(7);
+
+    return new Promise((resolve) => {
+      const handler = (event: MessageEvent) => {
+        if (
+          event.data?.source === 'vibescript-inject' &&
+          event.data?.action === 'DIFF_RESULT' &&
+          event.data?.payload?.requestId === requestId
+        ) {
+          window.removeEventListener('message', handler);
+          resolve(event.data.payload);
+        }
+      };
+
+      window.addEventListener('message', handler);
+      window.postMessage({
+        source: 'vibescript-content',
+        action: 'EDIT_FILE_REVIEW',
+        payload: { requestId, search, replace }
+      }, '*');
+
+      setTimeout(() => {
+        window.removeEventListener('message', handler);
+        resolve({ approved: false, output: 'Timeout' });
+      }, 300000);
+    });
+  },
+
+  cancelDiffReview: () => {
+    window.postMessage({
+      source: 'vibescript-content',
+      action: 'EDIT_FILE_REVIEW_CANCEL',
+      payload: {}
+    }, '*');
   }
 }));
