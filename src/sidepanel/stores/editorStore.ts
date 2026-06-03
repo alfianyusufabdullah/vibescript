@@ -19,18 +19,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   isActiveTabAppsScript: false,
 
   detectActiveTab: async () => {
-    if (typeof chrome === 'undefined' || !chrome.tabs) {
-      set({ isActiveTabAppsScript: false, scriptId: 'dev-mode' });
-      return;
-    }
-
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.url) {
+    if (typeof window === 'undefined') {
       set({ isActiveTabAppsScript: false, scriptId: null });
       return;
     }
 
-    const url = tab.url;
+    const url = window.location.href;
     const match = url.match(/\/(?:d|projects)\/([a-zA-Z0-9-_]+)/);
     
     if (url.includes('script.google.com') && match) {
@@ -44,69 +38,64 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     await get().detectActiveTab();
     if (!get().isActiveTabAppsScript) return null;
 
-    if (typeof chrome === 'undefined' || !chrome.tabs) return null;
-
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.id) return null;
+    const requestId = Math.random().toString(36).substring(7);
 
     return new Promise<MonacoEditorContext | null>((resolve) => {
-      chrome.tabs.sendMessage(
-        tab.id!,
-        {
-          source: 'vibescript-sidepanel',
-          action: 'GET_CODE'
-        },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            console.warn('Error fetching editor context:', chrome.runtime.lastError.message);
-            resolve(null);
-            return;
-          }
-          
-          if (response && response.success && response.context) {
-            set({ currentContext: response.context });
-            resolve(response.context);
+      const handler = (event: MessageEvent) => {
+        if (
+          event.data?.source === 'vibescript-inject' &&
+          event.data?.action === 'CODE_RESULT' &&
+          event.data?.payload?.requestId === requestId
+        ) {
+          window.removeEventListener('message', handler);
+          const context = event.data.payload.context;
+          if (context) {
+            set({ currentContext: context });
+            resolve(context);
           } else {
             resolve(null);
           }
         }
-      );
+      };
+
+      window.addEventListener('message', handler);
+
+      // Send to injected page-context script
+      window.postMessage({
+        source: 'vibescript-content',
+        action: 'GET_CODE',
+        payload: { requestId }
+      }, '*');
+
+      // 2 second timeout to prevent hanging
+      setTimeout(() => {
+        window.removeEventListener('message', handler);
+        resolve(null);
+      }, 2000);
     });
   },
 
   setCode: async (code: string) => {
-    if (typeof chrome === 'undefined' || !chrome.tabs) return;
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.id) return;
-
-    chrome.tabs.sendMessage(tab.id, {
-      source: 'vibescript-sidepanel',
+    window.postMessage({
+      source: 'vibescript-content',
       action: 'SET_CODE',
       payload: { code }
-    });
+    }, '*');
   },
 
   insertAtCursor: async (code: string) => {
-    if (typeof chrome === 'undefined' || !chrome.tabs) return;
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.id) return;
-
-    chrome.tabs.sendMessage(tab.id, {
-      source: 'vibescript-sidepanel',
+    window.postMessage({
+      source: 'vibescript-content',
       action: 'INSERT_AT_CURSOR',
       payload: { code }
-    });
+    }, '*');
   },
 
   replaceSelection: async (code: string) => {
-    if (typeof chrome === 'undefined' || !chrome.tabs) return;
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.id) return;
-
-    chrome.tabs.sendMessage(tab.id, {
-      source: 'vibescript-sidepanel',
+    window.postMessage({
+      source: 'vibescript-content',
       action: 'REPLACE_SELECTION',
       payload: { code }
-    });
+    }, '*');
   }
 }));

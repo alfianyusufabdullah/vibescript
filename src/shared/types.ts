@@ -33,7 +33,7 @@ export type MessageAction =
 export interface ExtensionMessage {
   source: 'vibescript-sidepanel' | 'vibescript-background' | 'vibescript-content' | 'vibescript-inject';
   action: MessageAction;
-  payload?: any;
+  payload?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
 export interface MonacoEditorContext {

@@ -13,7 +13,7 @@ interface ChatState {
       provider: Provider;
       apiKey: string;
       model: string;
-      editorContext: any;
+      editorContext: any; // eslint-disable-line @typescript-eslint/no-explicit-any
     }
   ) => Promise<void>;
   clearHistory: (scriptId: string) => void;
