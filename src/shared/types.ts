@@ -5,6 +5,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
+  agentSteps?: AgentStep[];
 }
 
 export interface Settings {
@@ -47,4 +48,63 @@ export interface MonacoEditorContext {
     endColumn: number;
   } | null;
   selectedText: string;
+}
+
+// ─── Tool System Types ────────────────────────────────────────────────────
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+export interface ToolResult {
+  toolCallId: string;
+  name: string;
+  success: boolean;
+  output: string;
+  error?: string;
+}
+
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface LLMResponse {
+  text: string;
+  toolCalls: ToolCall[];
+  finishReason: 'stop' | 'tool_calls' | 'length' | 'error';
+  usage?: TokenUsage;
+}
+
+// ─── Agent Types ───────────────────────────────────────────────────────────
+
+export type AgentStatus = 'idle' | 'thinking' | 'executing_tools' | 'done' | 'error' | 'cancelled';
+
+export interface AgentStep {
+  type: 'text' | 'tool_call' | 'tool_result';
+  content: string;
+  toolCalls?: ToolCall[];
+  toolResults?: ToolResult[];
+  timestamp: number;
+}
+
+// Canonical message format for agent loop (OpenAI-compatible)
+export interface AgentMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }>;
+  tool_call_id?: string;
 }
