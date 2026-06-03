@@ -35,6 +35,12 @@ export const useAgentStore = create<AgentState>((set) => ({
   run: async (prompt: string, contextInfo: ContextInfo) => {
     const { provider, apiKey, model, editorContext, scriptId } = contextInfo;
 
+    // Cancel any existing runtime before starting a new one
+    if (currentRuntime) {
+      currentRuntime.cancel();
+      currentRuntime = null;
+    }
+
     set({ status: 'thinking', steps: [], finalResponse: null, error: null, streamingText: '' });
 
     const runtime = new AgentRuntime();
