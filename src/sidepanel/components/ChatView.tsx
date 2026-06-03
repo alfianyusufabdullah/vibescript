@@ -8,7 +8,6 @@ import { MessageBubble } from './MessageBubble';
 import { ActionBar } from './ActionBar';
 import { ToolExecutionLog } from './ToolExecutionLog';
 import { Send, Trash2, Code, Sparkles, FileWarning, Loader2, StopCircle, Copy, Check } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
 import { Button } from './ui/button';
 
 export const ChatView: React.FC = () => {
@@ -185,13 +184,11 @@ export const ChatView: React.FC = () => {
               </button>
             </div>
 
-            {/* Streaming text */}
+            {/* Streaming text — plain text only, incomplete markdown looks broken */}
             {streamingText && (
               <div className="mb-2 bg-white border border-zinc-200 rounded-md px-3 py-2 animate-fade-in">
-                <div className="text-xs text-zinc-700 prose prose-zinc prose-sm max-w-none [&_pre]:bg-zinc-50 [&_pre]:border [&_pre]:border-zinc-200 [&_pre]:rounded [&_code]:text-[11px] [&_p]:leading-relaxed [&_p]:my-1">
-                  <ReactMarkdown>
-                    {streamingText}
-                  </ReactMarkdown>
+                <div className="text-xs text-zinc-700 leading-relaxed whitespace-pre-wrap break-words font-mono">
+                  {streamingText}
                 </div>
                 <span className="inline-block w-1.5 h-4 bg-zinc-400 rounded-sm animate-pulse" />
               </div>
