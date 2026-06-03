@@ -10,6 +10,23 @@ const DIFF_REVIEW_TIMEOUT = 300_000;
 const CONTEXT_WARN_RATIO = 0.7;
 const CONTEXT_CRITICAL_RATIO = 0.85;
 
+const MAX_RETRIES = 3;
+
+interface LLMCallResult {
+  text: string;
+  toolCalls: ToolCall[];
+  usage?: TokenUsage;
+}
+
+interface LLMCallError {
+  error: string;
+  retriable: boolean;
+}
+
+function isLLMCallError(v: LLMCallResult | LLMCallError): v is LLMCallError {
+  return 'error' in v && !('text' in v);
+}
+
 export interface AgentRuntimeCallbacks {
   onStep: (step: AgentStep) => void;
   onDone: (response: string) => void;
@@ -20,6 +37,7 @@ export interface AgentRuntimeCallbacks {
 export class AgentRuntime {
   private cancelled = false;
   private totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  private lastPromptTokens = 0;
   private contextWindow = 128_000;
 
   cancel() {
@@ -85,7 +103,7 @@ ${prompt}
       }
 
       // Ensure context window has room
-      const contextRatio = this.totalUsage.totalTokens / this.contextWindow;
+      const contextRatio = this.lastPromptTokens / this.contextWindow;
       if (contextRatio >= CONTEXT_WARN_RATIO && step > 0) {
         callbacks.onStep({
           type: 'text',
@@ -97,9 +115,12 @@ ${prompt}
       }
       this.ensureContext(messages);
 
-      // Call LLM with streaming when available
-      const llmResponse = await this.callLLMStreaming(provider, apiKey, model, messages, tools, callbacks.onStreamingText);
-      if (!llmResponse) return;
+      // Call LLM with retry logic
+      const llmResponse = await this.callLLMWithRetry(provider, apiKey, model, messages, tools, callbacks);
+      if (!llmResponse) {
+        callbacks.onError('LLM call failed after retries. Check your API key and network connection.');
+        return;
+      }
 
       const { text, toolCalls, usage } = llmResponse;
 
@@ -108,6 +129,7 @@ ${prompt}
         this.totalUsage.promptTokens += usage.promptTokens;
         this.totalUsage.completionTokens += usage.completionTokens;
         this.totalUsage.totalTokens += usage.totalTokens;
+        this.lastPromptTokens = usage.promptTokens;
       }
 
       // Push assistant response to messages
@@ -171,14 +193,22 @@ ${prompt}
         return;
       }
 
-      // After any edit/write, re-read file and inject fresh context
+      // After any edit/write, re-read file and inject fresh context (replace, not append)
       const modifiedFile = toolResults.some(r => r.name === 'edit_file');
       if (modifiedFile) {
         const fresh = await this.tryReadFile();
         if (fresh) {
+          // Remove previous context injection to avoid duplicates
+          const existingIdx = messages.findIndex(
+            m => m.role === 'user' && m.content.startsWith('[System Context]')
+          );
+          if (existingIdx !== -1) {
+            messages.splice(existingIdx, 1);
+          }
+
           messages.push({
-            role: 'system',
-            content: `Updated file content after modification:\n\`\`\`javascript\n${fresh}\n\`\`\``
+            role: 'user',
+            content: `[System Context] Updated file content after modification:\n\`\`\`javascript\n${fresh}\n\`\`\``
           });
         }
       }
@@ -202,7 +232,7 @@ ${prompt}
    */
   private ensureContext(messages: AgentMessage[]): void {
     const threshold = Math.floor(this.contextWindow * CONTEXT_WARN_RATIO);
-    if (this.totalUsage.totalTokens < threshold) return;
+    if (this.lastPromptTokens < threshold) return;
 
     // Remove duplicate system messages: keep only the last one (most recent code state)
     const systemIndices: number[] = [];
@@ -269,8 +299,10 @@ ${prompt}
     messages: AgentMessage[],
     tools: ToolDefinition[],
     onText?: (text: string) => void
-  ): Promise<{ text: string; toolCalls: ToolCall[]; usage?: TokenUsage } | null> {
-    if (typeof chrome === 'undefined' || !chrome.runtime) return null;
+  ): Promise<LLMCallResult | LLMCallError> {
+    if (typeof chrome === 'undefined' || !chrome.runtime) {
+      return { error: 'Chrome runtime unavailable', retriable: false };
+    }
 
     try {
       return await new Promise((resolve) => {
@@ -299,7 +331,18 @@ ${prompt}
           } else if (msg.type === 'error') {
             settled = true;
             port.disconnect();
-            resolve(null);
+            const errorMsg = msg.error || 'Unknown LLM error';
+            // Classify: 401/400/404 are permanent, everything else is retriable
+            const permanent = /\b(401|400|404)\b/.test(errorMsg);
+            resolve({ error: errorMsg, retriable: !permanent });
+          }
+        });
+
+        port.onDisconnect.addListener(() => {
+          if (!settled) {
+            settled = true;
+            console.warn('[VibeScript] Background service worker disconnected during LLM stream');
+            resolve({ error: 'Background service worker disconnected', retriable: true });
           }
         });
 
@@ -313,14 +356,64 @@ ${prompt}
           if (!settled) {
             settled = true;
             port.disconnect();
-            resolve(null);
+            resolve({ error: 'LLM call timed out after 60s', retriable: true });
           }
         }, 60000);
       });
     } catch {
       // Fallback to non-streaming
-      return this.callLLM(provider, apiKey, model, messages, tools);
+      const fallback = await this.callLLM(provider, apiKey, model, messages, tools);
+      if (fallback) return fallback;
+      return { error: 'LLM call failed (fallback)', retriable: true };
     }
+  }
+
+  /**
+   * Retry wrapper for LLM calls with exponential backoff.
+   * Retries up to MAX_RETRIES times for transient errors (429, 503, timeouts).
+   * Permanent errors (401, 400) fail immediately.
+   */
+  private async callLLMWithRetry(
+    provider: Provider,
+    apiKey: string,
+    model: string,
+    messages: AgentMessage[],
+    tools: ToolDefinition[],
+    callbacks: AgentRuntimeCallbacks
+  ): Promise<LLMCallResult | null> {
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      if (this.cancelled) return null;
+
+      const result = await this.callLLMStreaming(
+        provider, apiKey, model, messages, tools, callbacks.onStreamingText
+      );
+
+      if (!isLLMCallError(result)) {
+        return result;
+      }
+
+      // Permanent error — fail immediately
+      if (!result.retriable) {
+        callbacks.onError(result.error);
+        return null;
+      }
+
+      // Last attempt — no more retries
+      if (attempt === MAX_RETRIES - 1) {
+        callbacks.onError(`${result.error} (failed after ${MAX_RETRIES} attempts)`);
+        return null;
+      }
+
+      // Transient error — retry with backoff
+      const delay = Math.pow(2, attempt) * 1000;
+      callbacks.onStep({
+        type: 'text',
+        content: `LLM call failed: ${result.error}. Retrying in ${delay / 1000}s... (attempt ${attempt + 2}/${MAX_RETRIES})`,
+        timestamp: Date.now()
+      });
+      await new Promise(r => setTimeout(r, delay));
+    }
+    return null;
   }
 
   private async executeToolWithTimeout(tc: ToolCall): Promise<ToolResult> {
