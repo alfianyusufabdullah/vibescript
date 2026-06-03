@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ChatMessage, Provider } from '../../shared/types';
+import type { ChatMessage, Provider, AgentStep } from '../../shared/types';
 
 interface ChatState {
   messages: ChatMessage[];
@@ -18,6 +18,8 @@ interface ChatState {
   ) => Promise<void>;
   clearHistory: (scriptId: string) => void;
   addSystemMessage: (content: string) => void;
+  addUserMessage: (scriptId: string, content: string) => void;
+  addAgentResult: (scriptId: string, finalResponse: string, steps: AgentStep[]) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -158,6 +160,33 @@ ${prompt}
       timestamp: Date.now()
     };
     set(state => ({ messages: [...state.messages, msg] }));
+  },
+
+  addUserMessage: (scriptId: string, content: string) => {
+    const { messages } = get();
+    const userMsg: ChatMessage = {
+      id: Math.random().toString(36).substring(7),
+      role: 'user',
+      content,
+      timestamp: Date.now()
+    };
+    const newMessages = [...messages, userMsg];
+    set({ messages: newMessages });
+    persistChat(scriptId, newMessages);
+  },
+
+  addAgentResult: (scriptId: string, finalResponse: string, steps: AgentStep[]) => {
+    const { messages } = get();
+    const assistantMsg: ChatMessage = {
+      id: Math.random().toString(36).substring(7),
+      role: 'assistant',
+      content: finalResponse,
+      timestamp: Date.now(),
+      agentSteps: steps
+    };
+    const finalMessages = [...messages, assistantMsg];
+    set({ messages: finalMessages });
+    persistChat(scriptId, finalMessages);
   }
 }));
 
