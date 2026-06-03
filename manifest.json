@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "VibeScript - AI Coding for Apps Script",
+  "version": "1.0.0",
+  "description": "Vibe coding assistant for Google Apps Script",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://script.google.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background/background.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://script.google.com/*"],
+      "js": ["src/content/content.ts"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/content/inject.js"],
+      "matches": ["https://script.google.com/*"]
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "VibeScript Panel",
+    "default_icon": "src/assets/icon-48.png"
+  },
+  "icons": {
+    "16": "src/assets/icon-16.png",
+    "48": "src/assets/icon-48.png",
+    "128": "src/assets/icon-128.png"
+  }
+}
