@@ -6,17 +6,8 @@ export const AVAILABLE_TOOLS: ToolDefinition[] = [
     description: 'Read the currently active file content from the Monaco editor. Returns the full code, cursor position, and selection.',
     parameters: { type: 'object', properties: {}, required: [] }
   },
-  {
-    name: 'write_file',
-    description: 'Replace the entire content of the active file in the Monaco editor with the given code.',
-    parameters: {
-      type: 'object',
-      properties: {
-        code: { type: 'string', description: 'The complete new code for the file' }
-      },
-      required: ['code']
-    }
-  },
+
+
   {
     name: 'edit_file',
     description: 'Search for exact text in the active editor and replace it. Use for all edits: modifying code, inserting new code (search for anchor text), or deleting code (replace with empty string). This is the primary editing tool.',

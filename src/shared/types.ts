@@ -29,7 +29,10 @@ export type MessageAction =
   | 'PONG'
   | 'SIDE_PANEL_OPENED'
   | 'SELECTION_CHANGED'
-  | 'FILE_CHANGED';
+  | 'FILE_CHANGED'
+  | 'EDIT_FILE_REVIEW'
+  | 'EDIT_FILE_REVIEW_CANCEL'
+  | 'DIFF_RESULT';
 
 export interface ExtensionMessage {
   source: 'vibescript-sidepanel' | 'vibescript-background' | 'vibescript-content' | 'vibescript-inject';
