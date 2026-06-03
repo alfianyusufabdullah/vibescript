@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import type { ChatMessage } from '../../shared/types';
 import { useEditorStore } from '../stores/editorStore';
 import { Copy, Check, CornerDownLeft, FileText, Sparkles, User } from 'lucide-react';
+import { Button } from './ui/button';
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -50,16 +51,16 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
       <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 px-1 font-medium tracking-tight">
         {isAssistant ? (
           <>
-            <Sparkles className="w-3.5 h-3.5 text-zinc-400" />
-            <span className="text-zinc-300 font-semibold">AI Assistant</span>
+            <Sparkles className="w-3.5 h-3.5 text-zinc-500" />
+            <span className="text-zinc-700 font-semibold">AI Assistant</span>
           </>
         ) : (
           <>
-            <User className="w-3.5 h-3.5 text-zinc-400" />
-            <span className="text-zinc-300 font-semibold">You</span>
+            <User className="w-3.5 h-3.5 text-zinc-500" />
+            <span className="text-zinc-700 font-semibold">You</span>
           </>
         )}
-        <span className="text-[9px] text-zinc-500 font-normal">
+        <span className="text-[9px] text-zinc-400 font-normal">
           {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </span>
       </div>
@@ -67,8 +68,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
       <div
         className={`max-w-[88%] rounded-lg px-3.5 py-2.5 text-xs leading-relaxed transition-all ${
           isAssistant
-            ? 'bg-[#18181b] border border-zinc-800 text-zinc-200 rounded-tl-none shadow-sm'
-            : 'bg-[#27272a] text-zinc-50 border border-zinc-700 rounded-tr-none shadow-sm'
+            ? 'bg-white border border-zinc-200 text-zinc-800 rounded-tl-none shadow-sm'
+            : 'bg-zinc-900 text-zinc-50 border border-zinc-900 rounded-tr-none shadow-sm'
         }`}
       >
         {textWithoutCode ? (
@@ -85,44 +86,47 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
       {codeBlocks.map((code, index) => (
         <div
           key={index}
-          className="w-[88%] bg-[#18181b] border border-zinc-800 overflow-hidden mt-1.5 rounded-lg shadow-sm animate-fade-in"
+          className="w-[88%] bg-white border border-zinc-200 overflow-hidden mt-1.5 rounded-lg shadow-sm animate-fade-in"
         >
           {/* Header Action Panel */}
-          <div className="flex items-center justify-between px-3 py-1.5 bg-[#18181b] border-b border-zinc-850 text-[10px] text-zinc-400 font-medium">
-            <span className="text-[9px] text-zinc-500 font-mono">apps script</span>
+          <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-50 border-b border-zinc-200 text-[10px] text-zinc-500 font-medium">
+            <span className="text-[9px] text-zinc-400 font-mono">apps script</span>
             
             <div className="flex items-center gap-1.5">
-              <button
+              <Button
                 onClick={() => handleCopy(code, index)}
-                className="hover:text-zinc-200 hover:bg-zinc-800 transition-colors px-1.5 py-0.5 rounded flex items-center gap-1 cursor-pointer text-[9px] font-medium border border-zinc-800 bg-[#09090b]"
+                variant="outline"
+                className="h-6 px-1.5 py-0 text-[9px] font-sans font-medium text-zinc-600 bg-white"
                 title="Copy Code"
               >
-                {copiedMap[index] ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                {copiedMap[index] ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3 text-zinc-400" />}
                 {copiedMap[index] ? 'Copied' : 'Copy'}
-              </button>
+              </Button>
               
-              <button
+              <Button
                 onClick={() => insertAtCursor(code)}
-                className="hover:text-zinc-200 hover:bg-zinc-800 transition-colors px-1.5 py-0.5 rounded flex items-center gap-1 cursor-pointer text-[9px] font-medium border border-zinc-800 bg-[#09090b]"
+                variant="outline"
+                className="h-6 px-1.5 py-0 text-[9px] font-sans font-medium text-zinc-600 bg-white"
                 title="Insert at cursor position"
               >
-                <CornerDownLeft className="w-3 h-3 text-zinc-500" />
+                <CornerDownLeft className="w-3 h-3 text-zinc-400" />
                 Insert
-              </button>
+              </Button>
               
-              <button
+              <Button
                 onClick={() => replaceSelection(code)}
-                className="hover:text-zinc-200 hover:bg-zinc-800 transition-colors px-1.5 py-0.5 rounded flex items-center gap-1 cursor-pointer text-[9px] font-medium border border-zinc-800 bg-[#09090b]"
+                variant="outline"
+                className="h-6 px-1.5 py-0 text-[9px] font-sans font-medium text-zinc-600 bg-white"
                 title="Replace current selection"
               >
-                <FileText className="w-3 h-3 text-zinc-500" />
+                <FileText className="w-3 h-3 text-zinc-400" />
                 Replace
-              </button>
+              </Button>
             </div>
           </div>
           
-          <div className="p-3 bg-[#09090b] overflow-x-auto">
-            <pre className="text-xs text-zinc-300 font-mono whitespace-pre bg-transparent border-0 p-0 m-0 leading-relaxed select-text">
+          <div className="p-3 bg-zinc-50 overflow-x-auto">
+            <pre className="text-xs text-zinc-800 font-mono whitespace-pre bg-transparent border-0 p-0 m-0 leading-relaxed select-text">
               <code>{code}</code>
             </pre>
           </div>

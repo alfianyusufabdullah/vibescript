@@ -3,6 +3,7 @@ import { useEditorStore } from '../stores/editorStore';
 import { useChatStore } from '../stores/chatStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { HelpCircle, Wrench, RefreshCw, MessageSquareCode } from 'lucide-react';
+import { Button } from './ui/button';
 
 export const ActionBar: React.FC = () => {
   const { fetchContext } = useEditorStore();
@@ -64,19 +65,20 @@ export const ActionBar: React.FC = () => {
   ] as const;
 
   return (
-    <div className="grid grid-cols-2 gap-2 p-3 bg-zinc-950/20 border-b border-zinc-850">
+    <div className="grid grid-cols-2 gap-2 p-3 bg-zinc-50 border-b border-zinc-200">
       {actions.map((act) => {
         const Icon = act.icon;
         return (
-          <button
+          <Button
             key={act.type}
             disabled={isLoading}
+            variant="outline"
             onClick={() => handleAction(act.type)}
-            className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-md border border-zinc-800 text-[11px] font-medium text-zinc-300 bg-[#09090b] hover:bg-zinc-900 hover:text-zinc-50 transition-all duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            className="h-8 justify-center gap-1.5 text-[11px] font-sans font-medium text-zinc-700 bg-white"
           >
-            <Icon className="w-3.5 h-3.5 text-zinc-400" />
+            <Icon className="w-3.5 h-3.5 text-zinc-500" />
             {act.label}
-          </button>
+          </Button>
         );
       })}
     </div>
