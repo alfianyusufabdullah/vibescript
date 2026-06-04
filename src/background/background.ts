@@ -1,12 +1,15 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { ExtensionMessage, Settings } from '../shared/types';
-import { callLLM, callLLMStream } from '../shared/llm';
+import { providerRegistry } from '../shared/providers';
+import { registerBuiltinTools } from '../shared/tools';
 
-// Toggle the offcanvas panel when extension icon is clicked
+registerBuiltinTools();
+
 chrome.action.onClicked.addListener((tab) => {
   if (tab.id) {
     chrome.tabs.sendMessage(tab.id, {
       source: 'vibescript-background',
-      action: 'SIDE_PANEL_OPENED'
+      action: 'SIDE_PANEL_OPENED',
     }).catch((err) => {
       console.log('[VibeScript] Content script not active on this tab:', err.message);
     });
@@ -15,7 +18,6 @@ chrome.action.onClicked.addListener((tab) => {
 
 const tabEditorFrames: Record<number, number> = {};
 
-// Handle LLM requests (non-streaming)
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
   const tabId = sender.tab?.id;
   const frameId = sender.frameId;
@@ -31,11 +33,10 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   if (message.action === 'INJECT_BRIDGE') {
     if (tabId) {
       const targetFrameId = frameId !== undefined ? frameId : 0;
-      console.log(`[VibeScript Background] Injecting inject.js into tab ${tabId} frame ${targetFrameId} via scripting API`);
       chrome.scripting.executeScript({
         target: { tabId, frameIds: [targetFrameId] },
         world: 'MAIN',
-        files: ['src/content/inject.js']
+        files: ['src/content/inject.js'],
       }).then(() => {
         console.log(`[VibeScript Background] Successfully injected inject.js to tab ${tabId} frame ${targetFrameId}`);
       }).catch((err) => {
@@ -48,19 +49,24 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   if (message.action === 'LLM_REQUEST') {
     const { provider, apiKey, model, messages, tools } = message.payload;
 
-    callLLM(provider, apiKey, model, messages, tools)
-      .then((response) => {
-        sendResponse({
-          success: true,
-          text: response.text,
-          toolCalls: response.toolCalls,
-          finishReason: response.finishReason,
-          usage: response.usage
+    try {
+      const providerInstance = providerRegistry.get(provider, { apiKey, model });
+      providerInstance.generate({ model, messages, tools }, { apiKey, model })
+        .then((response) => {
+          sendResponse({
+            success: true,
+            text: response.text,
+            toolCalls: response.toolCalls,
+            finishReason: response.finishReason,
+            usage: response.usage,
+          });
+        })
+        .catch((err: Error) => {
+          sendResponse({ success: false, error: err.message || String(err) });
         });
-      })
-      .catch((err) => {
-        sendResponse({ success: false, error: err.message || String(err) });
-      });
+    } catch (err: unknown) {
+      sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
 
     return true;
   }
@@ -89,17 +95,21 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
             role: 'user' as const,
             content: `You are an expert coder. Complete the following code at the end of the text. Do not explain, do not add comments, and do not repeat the code prefix. Return ONLY the code to complete.
 Code prefix:
-${prefix}`
-          }
+${prefix}`,
+          },
         ];
-        const response = await callLLM(provider, apiKey, model, completionMessages, []);
+        const providerInstance = providerRegistry.get(provider, { apiKey, model });
+        const response = await providerInstance.generate(
+          { model, messages: completionMessages as any, tools: [] },
+          { apiKey, model }
+        );
         sendResponse({ suggestion: response.text });
       } catch (err) {
         console.error('[VibeScript Background] Completion failed:', err);
         sendResponse({ suggestion: '' });
       }
     });
-    return true; // async
+    return true;
   }
 
   if (message.action === 'PING') {
@@ -107,32 +117,23 @@ ${prefix}`
     return false;
   }
 
-  // Cross-frame messaging routing:
-  // Forward editor-oriented messages from main frame to Monaco editor iframe,
-  // and editor responses from Monaco editor iframe back to main frame (frameId 0).
   if (tabId && (message.source === 'vibescript-content' || message.source === 'vibescript-sidepanel')) {
     const editorFrameId = tabEditorFrames[tabId];
 
     if (frameId !== 0 && frameId === editorFrameId) {
-      // Message from Monaco editor frame: Forward to main frame (0)
       chrome.tabs.sendMessage(tabId, message, { frameId: 0 }).catch((err) => {
         console.warn('[VibeScript Background] Failed to forward to main frame:', err.message);
       });
     } else if (frameId === 0 || frameId === undefined) {
-      // Message from main frame: Forward to Monaco editor frame
       if (editorFrameId !== undefined) {
         chrome.tabs.sendMessage(tabId, message, { frameId: editorFrameId }).catch((err) => {
           console.warn('[VibeScript Background] Failed to forward to Monaco editor frame:', err.message);
         });
-      } else {
-        // Fallback: Send to all frames
-        console.log('[VibeScript Background] Editor frame not registered yet. Sending to all frames.');
       }
     }
   }
 });
 
-// Handle streaming LLM requests via port
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'llm-stream') return;
 
@@ -141,12 +142,28 @@ chrome.runtime.onConnect.addListener((port) => {
       const { provider, apiKey, model, messages, tools } = msg;
 
       try {
-        await callLLMStream(provider, apiKey, model, messages, tools, {
-          onText: (text: string) => port.postMessage({ type: 'text', text }),
-          onDone: (text: string, toolCalls: any, usage: any) =>
-            port.postMessage({ type: 'done', text, toolCalls, usage }),
-          onError: (error: string) => port.postMessage({ type: 'error', error })
-        });
+        const providerInstance = providerRegistry.get(provider, { apiKey, model });
+        const gen = providerInstance.stream({ model, messages, tools }, { apiKey, model });
+
+        for await (const event of gen) {
+          switch (event.type) {
+            case 'text_delta':
+              port.postMessage({ type: 'text', text: event.delta });
+              break;
+            case 'reasoning_delta':
+              port.postMessage({ type: 'reasoning', delta: event.delta });
+              break;
+            case 'usage':
+              port.postMessage({ type: 'usage', usage: event.usage });
+              break;
+            case 'done':
+              port.postMessage({ type: 'done', text: event.text, toolCalls: event.toolCalls, usage: event.usage });
+              break;
+            case 'error':
+              port.postMessage({ type: 'error', error: event.error });
+              break;
+          }
+        }
       } catch (err: any) {
         port.postMessage({ type: 'error', error: err.message || String(err) });
       }

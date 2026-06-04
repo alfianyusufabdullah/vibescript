@@ -1,7 +1,20 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { create } from 'zustand';
-import type { AgentStatus, AgentStep, Provider, CodeAttachment } from '../../shared/types';
-import { AgentRuntime } from '../services/agentRuntime';
+import type { AgentStatus, AgentStep, Provider, CodeAttachment, AgentRole } from '../../shared/types';
+import { registerBuiltinTools } from '../../shared/tools';
+
+let _toolsRegistered = false;
+function ensureTools(): void {
+  if (!_toolsRegistered) {
+    registerBuiltinTools();
+    _toolsRegistered = true;
+  }
+}
+import { agentOrchestrator } from '../services/agentOrchestrator';
 import { useChatStore } from './chatStore';
+import { resolveAgentFromPrompt } from '../../shared/agents';
+import { sessionManager } from '../services/sessionManager';
+import { useEditorStore } from './editorStore';
 
 interface ContextInfo {
   provider: Provider;
@@ -19,13 +32,13 @@ interface AgentState {
   error: string | null;
   streamingText: string;
   currentStepText: string;
+  currentRole: AgentRole | null;
+  reasoningText: string;
 
   run: (prompt: string, contextInfo: ContextInfo) => Promise<void>;
   cancel: () => void;
   reset: () => void;
 }
-
-let currentRuntime: AgentRuntime | null = null;
 
 export const useAgentStore = create<AgentState>((set) => ({
   status: 'idle',
@@ -34,61 +47,122 @@ export const useAgentStore = create<AgentState>((set) => ({
   error: null,
   streamingText: '',
   currentStepText: '',
+  currentRole: null,
+  reasoningText: '',
 
   run: async (prompt: string, contextInfo: ContextInfo) => {
+    ensureTools();
+
     const { provider, apiKey, model, editorContext, scriptId, attachments } = contextInfo;
 
-    // Cancel any existing runtime before starting a new one
-    if (currentRuntime) {
-      currentRuntime.cancel();
-      currentRuntime = null;
+    agentOrchestrator.cancel();
+
+    const { role, cleanPrompt } = resolveAgentFromPrompt(prompt);
+
+    set({
+      status: 'thinking',
+      steps: [],
+      finalResponse: null,
+      error: null,
+      streamingText: '',
+      currentStepText: '',
+      currentRole: role,
+      reasoningText: '',
+    });
+
+    // Reuse existing session for this conversation; create one only on first message
+    const scriptLabel = editorContext?.scriptId || 'global';
+    const existingSessions = await sessionManager.listSessions(scriptLabel);
+    const currentSessionId = sessionManager.getCurrentSessionId();
+    const currentSession = currentSessionId
+      ? await sessionManager.loadSession(scriptLabel, currentSessionId)
+      : null;
+    if (!currentSession) {
+      if (existingSessions.length === 0) {
+        await sessionManager.createSession(scriptLabel, `Conversation`, role.id);
+      } else {
+        // reuse the most recent session
+        const latest = existingSessions.sort((a, b) => b.updatedAt - a.updatedAt)[0];
+        await sessionManager.loadSession(scriptLabel, latest.id);
+        await sessionManager.deactivateOtherSessions(scriptLabel, latest.id);
+      }
     }
 
-    set({ status: 'thinking', steps: [], finalResponse: null, error: null, streamingText: '', currentStepText: '' });
+    await agentOrchestrator.runAgent(
+      role,
+      cleanPrompt,
+      provider,
+      apiKey,
+      model,
+      editorContext,
+      scriptId,
+      {
+        onStreamingText: (text: string) => {
+          set((state) => ({
+            streamingText: state.streamingText + text,
+            currentStepText: state.currentStepText + text,
+          }));
+        },
+        onReasoning: (text: string) => {
+          set((state) => ({
+            reasoningText: state.reasoningText + text,
+          }));
+        },
+        onStep: (step: AgentStep) => {
+          set((state) => ({
+            steps: [...state.steps, step],
+            currentStepText: '',
+            status: step.type === 'tool_call' ? ('executing_tools' as AgentStatus) : ('thinking' as AgentStatus),
+          }));
+        },
+        onDone: async (response: string) => {
+          const state = useAgentStore.getState();
+          const content = state.streamingText || response;
 
-    const runtime = new AgentRuntime();
-    currentRuntime = runtime;
+          // Save session state (keep active — conversation continues)
+          const sid = useEditorStore.getState().scriptId || 'global';
+          const sessId = sessionManager.getCurrentSessionId();
+          if (sessId) {
+            const sess = await sessionManager.loadSession(sid, sessId);
+            if (sess) {
+              const chatMessages = useChatStore.getState().messages;
+              sess.status = 'active';
+              await sessionManager.deactivateOtherSessions(sid, sess.id);
+              await sessionManager.updateSessionMessages(sess, chatMessages, state.steps, {
+                promptTokens: 0,
+                completionTokens: 0,
+                totalTokens: 0,
+              });
+            }
+          }
 
-    await runtime.run(prompt, provider, apiKey, model, editorContext, scriptId, {
-      onStreamingText: (text: string) => {
-        set((state) => ({
-          streamingText: state.streamingText + text,
-          currentStepText: state.currentStepText + text
-        }));
+          set({ status: 'done', finalResponse: response, currentStepText: '', currentRole: null });
+          useChatStore.getState().addAgentResult(scriptId, content, state.steps);
+        },
+        onError: (error: string) => {
+          set({ status: 'error', error, currentStepText: '', currentRole: null });
+        },
       },
-      onStep: (step: AgentStep) => {
-        set((state) => ({
-          steps: [...state.steps, step],
-          currentStepText: '',
-          status: step.type === 'tool_call' ? 'executing_tools' as AgentStatus : 'thinking' as AgentStatus
-        }));
-      },
-      onDone: (response: string) => {
-        const state = useAgentStore.getState();
-        // Use accumulated streaming text (full conversation) when available,
-        // fall back to final response (e.g. when finish tool provides summary)
-        const content = state.streamingText || response;
-        set({ status: 'done', finalResponse: response, currentStepText: '' });
-        useChatStore.getState().addAgentResult(scriptId, content, state.steps);
-        currentRuntime = null;
-      },
-      onError: (error: string) => {
-        set({ status: 'error', error, currentStepText: '' });
-        currentRuntime = null;
-      }
-    }, attachments);
+      attachments
+    );
   },
 
   cancel: () => {
-    if (currentRuntime) {
-      currentRuntime.cancel();
-      currentRuntime = null;
-    }
-    set({ status: 'cancelled', currentStepText: '' });
+    agentOrchestrator.cancel();
+    set({ status: 'cancelled', currentStepText: '', currentRole: null });
   },
 
   reset: () => {
-    currentRuntime = null;
-    set({ status: 'idle', steps: [], finalResponse: null, error: null, streamingText: '', currentStepText: '' });
-  }
+    agentOrchestrator.cancel();
+    set({
+      status: 'idle',
+      steps: [],
+      finalResponse: null,
+      error: null,
+      streamingText: '',
+      currentStepText: '',
+      currentRole: null,
+      reasoningText: '',
+    });
+  },
 }));

@@ -1,15 +1,19 @@
-import type { Provider, ToolDefinition, ToolCall, ToolResult, AgentMessage, AgentStep, TokenUsage, CodeAttachment } from '../../shared/types';
-import { AVAILABLE_TOOLS } from '../../shared/tools';
-import { AGENT_SYSTEM_PROMPT, PROVIDERS } from '../../shared/constants';
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { Provider as ProviderName, ToolDefinition, ToolCall, ToolResult, AgentMessage, AgentStep, TokenUsage, CodeAttachment, AgentRole, ToolContext } from '../../shared/types';
+import { toolRegistry } from '../../shared/toolRegistry';
+import { AGENT_ROLES } from '../../shared/agents';
+import { providerRegistry } from '../../shared/providers/registry';
+import type { Provider } from '../../shared/providers/types';
+import { PROVIDERS } from '../../shared/constants';
 import { useEditorStore } from '../stores/editorStore';
 import { useChatStore } from '../stores/chatStore';
+import { eventBus } from '../../shared/eventBus';
 
 const MAX_STEPS = 25;
 const TOOL_TIMEOUT = 10_000;
 const DIFF_REVIEW_TIMEOUT = 300_000;
 const CONTEXT_WARN_RATIO = 0.7;
 const CONTEXT_CRITICAL_RATIO = 0.85;
-
 const MAX_RETRIES = 3;
 
 interface LLMCallResult {
@@ -32,6 +36,7 @@ export interface AgentRuntimeCallbacks {
   onDone: (response: string) => void;
   onError: (error: string) => void;
   onStreamingText?: (text: string) => void;
+  onReasoning?: (text: string) => void;
 }
 
 export class AgentRuntime {
@@ -39,15 +44,25 @@ export class AgentRuntime {
   private totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   private lastPromptTokens = 0;
   private contextWindow = 128_000;
+  private role: AgentRole;
+  private stopRequested = false;
+  private reasoningText = '';
+  private currentProvider: Provider | null = null;
+  private currentModel = '';
+  private currentApiKey = '';
 
-  cancel() {
+  constructor(role?: AgentRole) {
+    this.role = role || AGENT_ROLES.build;
+  }
+
+  cancel(): void {
     this.cancelled = true;
     useEditorStore.getState().cancelDiffReview();
   }
 
   async run(
     prompt: string,
-    provider: Provider,
+    provider: ProviderName,
     apiKey: string,
     model: string,
     editorContext: any,
@@ -57,9 +72,12 @@ export class AgentRuntime {
   ): Promise<void> {
     this.cancelled = false;
     this.totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    this.reasoningText = '';
+    this.stopRequested = false;
     this.contextWindow = PROVIDERS[provider]?.contextWindow || 128_000;
 
-    // Enrich prompt with editor context
+    eventBus.emit('agent:status', { status: 'thinking', role: this.role.id });
+
     let promptWithContext = prompt;
     if (editorContext) {
       promptWithContext = `
@@ -86,12 +104,11 @@ ${prompt}
     }
 
     const messages: AgentMessage[] = [
-      { role: 'system', content: AGENT_SYSTEM_PROMPT },
+      { role: 'system', content: this.role.systemPrompt },
     ];
 
-    // Load previous chat history for context
     const chatHistory = useChatStore.getState().messages;
-    const recentHistory = chatHistory.slice(-6); // last 6 messages
+    const recentHistory = chatHistory.slice(-6);
     for (const msg of recentHistory) {
       if (msg.role === 'user') {
         let msgContent = msg.content;
@@ -109,19 +126,30 @@ ${prompt}
       }
     }
 
-    // Add the current prompt
     messages.push({ role: 'user', content: promptWithContext });
 
-    const tools: ToolDefinition[] = AVAILABLE_TOOLS;
+    const providerInstance = providerRegistry.get(provider, { apiKey, model });
+    this.currentProvider = providerInstance;
+    this.currentModel = model;
+    this.currentApiKey = apiKey;
+
+    const allowedTools = this.role.allowedTools === '*'
+      ? undefined
+      : this.role.allowedTools;
 
     for (let step = 0; step < MAX_STEPS; step++) {
-      // Check cancellation
       if (this.cancelled) {
+        eventBus.emit('agent:status', { status: 'error', role: this.role.id });
         callbacks.onError('Cancelled');
         return;
       }
 
-      // Ensure context window has room
+      if (this.stopRequested) {
+        eventBus.emit('agent:status', { status: 'done', role: this.role.id });
+        callbacks.onDone('Task finished.');
+        return;
+      }
+
       const contextRatio = this.lastPromptTokens / this.contextWindow;
       if (contextRatio >= CONTEXT_WARN_RATIO && step > 0) {
         callbacks.onStep({
@@ -129,21 +157,19 @@ ${prompt}
           content: contextRatio >= CONTEXT_CRITICAL_RATIO
             ? `Context at ${(contextRatio * 100).toFixed(0)}% — trimming old messages to continue`
             : `Context at ${(contextRatio * 100).toFixed(0)}% — optimizing message history`,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
       }
-      this.ensureContext(messages);
+      await this.ensureContext(messages);
 
-      // Call LLM with retry logic
-      const llmResponse = await this.callLLMWithRetry(provider, apiKey, model, messages, tools, callbacks);
+      const llmResponse = await this.callLLMWithRetry(providerInstance, model, messages, allowedTools, callbacks, apiKey);
       if (!llmResponse) {
-        callbacks.onError('LLM call failed after retries. Check your API key and network connection.');
+        eventBus.emit('agent:status', { status: 'error', role: this.role.id });
         return;
       }
 
       const { text, toolCalls, usage } = llmResponse;
 
-      // Accumulate usage
       if (usage) {
         this.totalUsage.promptTokens += usage.promptTokens;
         this.totalUsage.completionTokens += usage.completionTokens;
@@ -151,128 +177,138 @@ ${prompt}
         this.lastPromptTokens = usage.promptTokens;
       }
 
-      // Push assistant response to messages
       const assistantMsg: AgentMessage = {
         role: 'assistant',
         content: text,
-        tool_calls: toolCalls.length > 0 ? toolCalls.map(tc => ({
-          id: tc.id,
-          type: 'function' as const,
-          function: {
-            name: tc.name,
-            arguments: JSON.stringify(tc.arguments)
-          }
-        })) : undefined
+        tool_calls: toolCalls.length > 0
+          ? toolCalls.map((tc) => ({
+              id: tc.id,
+              type: 'function' as const,
+              function: {
+                name: tc.name,
+                arguments: JSON.stringify(tc.arguments),
+              },
+            }))
+          : undefined,
       };
       messages.push(assistantMsg);
 
-      // No tool calls → done
       if (!toolCalls || toolCalls.length === 0) {
-        callbacks.onStep({
-          type: 'text',
-          content: text,
-          timestamp: Date.now()
-        });
+        callbacks.onStep({ type: 'text', content: text, timestamp: Date.now() });
+        eventBus.emit('agent:status', { status: 'done', role: this.role.id });
         callbacks.onDone(text);
         return;
       }
 
-      // Check for finish tool
-      const finishCall = toolCalls.find(tc => tc.name === 'finish');
+      const finishCall = toolCalls.find((tc) => tc.name === 'finish');
       if (finishCall) {
         const summary = (finishCall.arguments?.summary as string) || '';
         const finalContent = text
           ? (summary && summary !== text ? `${text}\n\n**Summary:** ${summary}` : text)
           : summary || 'Task finished';
-
-        callbacks.onStep({
-          type: 'text',
-          content: finalContent,
-          timestamp: Date.now()
-        });
+        callbacks.onStep({ type: 'text', content: finalContent, timestamp: Date.now() });
+        eventBus.emit('agent:status', { status: 'done', role: this.role.id });
         callbacks.onDone(summary || text);
         return;
       }
 
-      // Emit step with tool calls
       callbacks.onStep({
         type: 'tool_call',
         content: text,
         toolCalls,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
 
-      // Execute each tool
+      eventBus.emit('agent:status', { status: 'executing_tools', role: this.role.id });
+
       const toolResults: ToolResult[] = [];
       for (const tc of toolCalls) {
         if (this.cancelled) {
+          eventBus.emit('agent:status', { status: 'error', role: this.role.id });
           callbacks.onError('Cancelled');
           return;
         }
+
         const result = await this.executeToolWithTimeout(tc);
         toolResults.push(result);
 
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
-          content: JSON.stringify(result)
+          content: JSON.stringify(result),
         });
       }
 
-      // Check if user rejected the edit
-      const rejected = toolResults.some(r => r.error === 'USER_REJECTED');
+      const rejected = toolResults.some((r) => r.error === 'USER_REJECTED');
       if (rejected) {
         callbacks.onStep({
           type: 'text',
           content: 'Changes rejected. Agent stopped.',
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
+        eventBus.emit('agent:status', { status: 'done', role: this.role.id });
         callbacks.onDone('Changes rejected. Agent stopped.');
         return;
       }
 
-      // After any edit/write, re-read file and inject fresh context (replace, not append)
-      const modifiedFile = toolResults.some(r => r.name === 'edit_file');
+      const modifiedFile = toolResults.some((r) => r.name === 'edit_file');
       if (modifiedFile) {
         const fresh = await this.tryReadFile();
         if (fresh) {
-          // Remove previous context injection to avoid duplicates
           const existingIdx = messages.findIndex(
-            m => m.role === 'user' && m.content.startsWith('[System Context]')
+            (m) => m.role === 'user' && m.content.startsWith('[System Context]')
           );
           if (existingIdx !== -1) {
             messages.splice(existingIdx, 1);
           }
-
           messages.push({
             role: 'user',
-            content: `[System Context] Updated file content after modification:\n\`\`\`javascript\n${fresh}\n\`\`\``
+            content: `[System Context] Updated file content after modification:\n\`\`\`javascript\n${fresh}\n\`\`\``,
           });
         }
       }
 
-      // Emit step with tool results
       callbacks.onStep({
         type: 'tool_result',
         content: '',
         toolResults,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
     }
 
     const currentTokens = this.totalUsage.totalTokens;
+    eventBus.emit('agent:status', { status: 'error', role: this.role.id });
     callbacks.onError(`Max steps (${MAX_STEPS}) reached after ~${(currentTokens / 1000).toFixed(0)}K tokens`);
   }
 
-  /**
-   * Trim messages when approaching context window limit.
-   * Keeps: system messages, user prompt, and last 2 complete agent iterations.
-   */
-  private ensureContext(messages: AgentMessage[]): void {
+  private toolContext(): ToolContext {
+    const store = useEditorStore.getState();
+    return {
+      editorStore: {
+        fetchContext: () => store.fetchContext(),
+        editFile: (search, replace) => store.editFile(search, replace),
+        editFileWithReview: (search, replace) => store.editFileWithReview(search, replace),
+        listOpenFiles: () => store.listOpenFiles(),
+        readFileByName: (filename) => store.readFileByName(filename),
+        cancelDiffReview: () => store.cancelDiffReview(),
+      },
+      cancelDiffReview: () => store.cancelDiffReview(),
+      signalStop: () => {
+        this.stopRequested = true;
+      },
+    };
+  }
+
+  private async ensureContext(messages: AgentMessage[]): Promise<void> {
     const threshold = Math.floor(this.contextWindow * CONTEXT_WARN_RATIO);
     if (this.lastPromptTokens < threshold) return;
 
-    // Remove duplicate system messages: keep only the last one (most recent code state)
+    const critical = this.lastPromptTokens >= Math.floor(this.contextWindow * CONTEXT_CRITICAL_RATIO);
+
+    if (!critical && this.currentProvider && await this.trySummarize(messages)) {
+      return;
+    }
+
     const systemIndices: number[] = [];
     for (let i = 0; i < messages.length; i++) {
       if (messages[i].role === 'system') systemIndices.push(i);
@@ -283,173 +319,156 @@ ${prompt}
       }
     }
 
-    // Find indices of all assistant messages
     const assistantIndices = messages
-      .map((m, i) => m.role === 'assistant' ? i : -1)
-      .filter(i => i !== -1);
+      .map((m, i) => (m.role === 'assistant' ? i : -1))
+      .filter((i) => i !== -1);
 
-    // Keep only last 2 assistant rounds (assistant + their tool results)
     if (assistantIndices.length > 2) {
       const keepFrom = assistantIndices[assistantIndices.length - 2];
-      const userIdx = messages.findIndex(m => m.role === 'user');
+      const userIdx = messages.findIndex((m) => m.role === 'user');
       if (userIdx >= 0 && keepFrom > userIdx) {
         messages.splice(userIdx + 1, keepFrom - userIdx - 1);
       }
     }
   }
 
-  private async callLLM(
-    provider: Provider,
-    apiKey: string,
-    model: string,
-    messages: AgentMessage[],
-    tools: ToolDefinition[]
-  ): Promise<{ text: string; toolCalls: ToolCall[]; usage?: TokenUsage } | null> {
-    // Fallback: non-streaming via sendMessage
-    if (typeof chrome !== 'undefined' && chrome.runtime) {
-      return new Promise((resolve) => {
-        chrome.runtime.sendMessage(
-          {
-            source: 'vibescript-sidepanel',
-            action: 'LLM_REQUEST',
-            payload: { provider, apiKey, model, messages, tools }
-          },
-          (response) => {
-            if (chrome.runtime.lastError) { resolve(null); return; }
-            if (response && response.success) {
-              resolve({
-                text: response.text || '',
-                toolCalls: response.toolCalls || [],
-                usage: response.usage
-              });
-            } else { resolve(null); }
-          }
-        );
-      });
+  private async trySummarize(messages: AgentMessage[]): Promise<boolean> {
+    if (!this.currentProvider) return false;
+
+    const assistantIndices = messages
+      .map((m, i) => (m.role === 'assistant' ? i : -1))
+      .filter((i) => i !== -1);
+
+    if (assistantIndices.length <= 3) return false;
+
+    const summarizeUpTo = assistantIndices[assistantIndices.length - 3];
+    const toSummarize = messages.slice(0, summarizeUpTo + 1);
+
+    try {
+      const summaryMessages: AgentMessage[] = [
+        { role: 'system', content: 'Summarize the key points from this conversation history concisely.' },
+        ...toSummarize,
+        { role: 'user', content: 'Provide a one-paragraph summary of what was discussed and what was accomplished so far.' },
+      ];
+
+      const gen = this.currentProvider.stream(
+        { model: this.currentModel, messages: summaryMessages },
+        { apiKey: this.currentApiKey || '', model: this.currentModel }
+      );
+
+      let resultText = '';
+      for await (const event of gen) {
+        if (event.type === 'done') {
+          resultText = event.text;
+        } else if (event.type === 'error') {
+          return false;
+        }
+      }
+
+      if (resultText) {
+        messages.splice(0, summarizeUpTo + 1);
+        messages.unshift({
+          role: 'user',
+          content: `[Conversation Summary] ${resultText}`,
+        });
+        return true;
+      }
+    } catch {
+      // summarization failed, fall back to truncation
     }
-    return null;
+    return false;
   }
 
   private async callLLMStreaming(
     provider: Provider,
-    apiKey: string,
     model: string,
     messages: AgentMessage[],
     tools: ToolDefinition[],
-    onText?: (text: string) => void
+    apiKey: string,
+    onText?: (text: string) => void,
+    onReasoning?: (text: string) => void
   ): Promise<LLMCallResult | LLMCallError> {
-    if (typeof chrome === 'undefined' || !chrome.runtime) {
-      return { error: 'Chrome runtime unavailable', retriable: false };
-    }
-
     try {
-      return await new Promise((resolve) => {
-        const port = chrome.runtime.connect({ name: 'llm-stream' });
-        let accumulatedText = '';
-        let resultToolCalls: ToolCall[] = [];
-        let resultUsage: TokenUsage | undefined;
-        let settled = false;
+      const gen = provider.stream(
+        { model, messages, tools },
+        { apiKey, model }
+      );
 
-        port.onMessage.addListener((msg) => {
-          if (settled) return;
+      let accumulatedText = '';
+      let resultToolCalls: ToolCall[] = [];
+      let resultUsage: TokenUsage | undefined;
 
-          if (msg.type === 'text') {
-            accumulatedText += msg.text;
-            onText?.(msg.text);
-          } else if (msg.type === 'done') {
-            settled = true;
-            resultToolCalls = msg.toolCalls || [];
-            resultUsage = msg.usage;
-            port.disconnect();
-            resolve({
-              text: msg.text || accumulatedText,
+      for await (const event of gen) {
+        switch (event.type) {
+          case 'text_delta':
+            accumulatedText += event.delta;
+            onText?.(event.delta);
+            break;
+          case 'reasoning_delta':
+            this.reasoningText += event.delta;
+            onReasoning?.(event.delta);
+            break;
+          case 'tool_call_start':
+          case 'tool_call_delta':
+          case 'tool_call_stop':
+            break;
+          case 'usage':
+            resultUsage = event.usage;
+            break;
+          case 'done':
+            resultToolCalls = event.toolCalls;
+            return {
+              text: event.text || accumulatedText,
               toolCalls: resultToolCalls,
-              usage: resultUsage
-            });
-          } else if (msg.type === 'error') {
-            settled = true;
-            port.disconnect();
-            const errorMsg = msg.error || 'Unknown LLM error';
-            // Classify: 401/400/404 are permanent, everything else is retriable
-            const permanent = /\b(401|400|404)\b/.test(errorMsg);
-            resolve({ error: errorMsg, retriable: !permanent });
-          }
-        });
+              usage: resultUsage || event.usage,
+            };
+          case 'error':
+            return { error: event.error, retriable: event.retriable };
+        }
+      }
 
-        port.onDisconnect.addListener(() => {
-          if (!settled) {
-            settled = true;
-            console.warn('[VibeScript] Background service worker disconnected during LLM stream');
-            resolve({ error: 'Background service worker disconnected', retriable: true });
-          }
-        });
-
-        port.postMessage({
-          type: 'start',
-          provider, apiKey, model, messages, tools
-        });
-
-        // Timeout safety
-        setTimeout(() => {
-          if (!settled) {
-            settled = true;
-            port.disconnect();
-            resolve({ error: 'LLM call timed out after 60s', retriable: true });
-          }
-        }, 60000);
-      });
-    } catch {
-      // Fallback to non-streaming
-      const fallback = await this.callLLM(provider, apiKey, model, messages, tools);
-      if (fallback) return fallback;
-      return { error: 'LLM call failed (fallback)', retriable: true };
+      return { text: accumulatedText, toolCalls: [], usage: resultUsage };
+    } catch (err: any) {
+      return { error: err.message || String(err), retriable: true };
     }
   }
 
-  /**
-   * Retry wrapper for LLM calls with exponential backoff.
-   * Retries up to MAX_RETRIES times for transient errors (429, 503, timeouts).
-   * Permanent errors (401, 400) fail immediately.
-   */
   private async callLLMWithRetry(
     provider: Provider,
-    apiKey: string,
     model: string,
     messages: AgentMessage[],
-    tools: ToolDefinition[],
-    callbacks: AgentRuntimeCallbacks
+    allowedTools: string[] | undefined,
+    callbacks: AgentRuntimeCallbacks,
+    apiKey: string
   ): Promise<LLMCallResult | null> {
+    const tools = toolRegistry.getAll(allowedTools);
+
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       if (this.cancelled) return null;
 
-      const result = await this.callLLMStreaming(
-        provider, apiKey, model, messages, tools, callbacks.onStreamingText
-      );
+      const result = await this.callLLMStreaming(provider, model, messages, tools, apiKey, callbacks.onStreamingText, callbacks.onReasoning);
 
       if (!isLLMCallError(result)) {
         return result;
       }
 
-      // Permanent error — fail immediately
       if (!result.retriable) {
         callbacks.onError(result.error);
         return null;
       }
 
-      // Last attempt — no more retries
       if (attempt === MAX_RETRIES - 1) {
         callbacks.onError(`${result.error} (failed after ${MAX_RETRIES} attempts)`);
         return null;
       }
 
-      // Transient error — retry with backoff
       const delay = Math.pow(2, attempt) * 1000;
       callbacks.onStep({
         type: 'text',
         content: `LLM call failed: ${result.error}. Retrying in ${delay / 1000}s... (attempt ${attempt + 2}/${MAX_RETRIES})`,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
-      await new Promise(r => setTimeout(r, delay));
+      await new Promise((r) => setTimeout(r, delay));
     }
     return null;
   }
@@ -461,93 +480,38 @@ ${prompt}
     );
 
     try {
+      eventBus.emit('tool:start', { name: tc.name, args: tc.arguments });
+      const startTime = Date.now();
+      const ctx = this.toolContext();
       const result = await Promise.race([
-        this.executeTool(tc),
-        timeoutPromise
+        toolRegistry.execute(tc.name, tc.arguments, ctx),
+        timeoutPromise,
       ]);
-      return result;
+      const duration = Date.now() - startTime;
+      eventBus.emit('tool:result', {
+        name: tc.name,
+        success: result.success,
+        output: result.output,
+        error: result.error,
+        duration,
+      });
+      return { toolCallId: tc.id, name: tc.name, success: result.success, output: result.output, error: result.error };
     } catch (err: any) {
-      return {
+      const result = {
         toolCallId: tc.id,
         name: tc.name,
         success: false,
         output: '',
-        error: err.message || String(err)
+        error: err.message || String(err),
       };
-    }
-  }
-
-  private async executeTool(tc: ToolCall): Promise<ToolResult> {
-    const editorStore = useEditorStore.getState();
-
-    switch (tc.name) {
-      case 'read_active_file': {
-        const context = await editorStore.fetchContext();
-        return {
-          toolCallId: tc.id,
-          name: tc.name,
-          success: !!context,
-          output: context ? JSON.stringify(context) : 'No active editor'
-        };
-      }
-
-
-      case 'edit_file': {
-        const search = tc.arguments?.search as string;
-        const replace = tc.arguments?.replace as string;
-        if (!search || replace === undefined) {
-          return { toolCallId: tc.id, name: tc.name, success: false, output: '', error: 'Missing search or replace argument' };
-        }
-        const result = await editorStore.editFileWithReview(search, replace);
-        if (!result.approved) {
-          return {
-            toolCallId: tc.id,
-            name: tc.name,
-            success: false,
-            output: result.output,
-            error: 'USER_REJECTED'
-          };
-        }
-        return {
-          toolCallId: tc.id,
-          name: tc.name,
-          success: true,
-          output: `Applied edit: replaced "${search}" with "${replace}"`
-        };
-      }
-
-      case 'list_open_files': {
-        const files = await editorStore.listOpenFiles();
-        return {
-          toolCallId: tc.id,
-          name: tc.name,
-          success: true,
-          output: JSON.stringify(files)
-        };
-      }
-
-      case 'read_file_by_name': {
-        const filename = tc.arguments?.filename as string;
-        if (!filename) {
-          return { toolCallId: tc.id, name: tc.name, success: false, output: '', error: 'Missing filename argument' };
-        }
-        const context = await editorStore.readFileByName(filename);
-        return {
-          toolCallId: tc.id,
-          name: tc.name,
-          success: !!context,
-          output: context ? JSON.stringify(context) : `File "${filename}" not found`
-        };
-      }
-
-      default:
-        return {
-          toolCallId: tc.id,
-          name: tc.name,
-          success: false,
-          output: '',
-          error: `Unknown tool: ${tc.name}`
-        };
+      eventBus.emit('tool:result', {
+        name: tc.name,
+        success: false,
+        output: '',
+        error: result.error,
+        duration: timeout,
+      });
+      return result;
     }
   }
 
