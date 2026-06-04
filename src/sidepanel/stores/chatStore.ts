@@ -20,6 +20,7 @@ interface ChatState {
   addSystemMessage: (content: string) => void;
   addUserMessage: (scriptId: string, content: string, attachments?: CodeAttachment[]) => void;
   addAgentResult: (scriptId: string, finalResponse: string, steps: AgentStep[]) => void;
+  setMessages: (msgs: ChatMessage[]) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -188,6 +189,10 @@ ${prompt}
     const finalMessages = [...messages, assistantMsg];
     set({ messages: finalMessages });
     persistChat(scriptId, finalMessages);
+  },
+
+  setMessages: (msgs: ChatMessage[]) => {
+    set({ messages: msgs });
   }
 }));
 
