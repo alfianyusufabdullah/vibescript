@@ -1,18 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import type { AgentStep, ToolCall, ToolResult } from '../../shared/types';
 import { Loader2, Check, X, ChevronDown, ChevronRight, MessageSquare } from 'lucide-react';
+import { pairSteps } from '../utils/agent';
+import type { PairedStep } from '../utils/agent';
 
 interface ToolExecutionLogProps {
   steps: AgentStep[];
-}
-
-interface PairedStep {
-  type: 'text' | 'tool';
-  content: string;
-  toolCalls: ToolCall[];
-  toolResults: ToolResult[];
-  isComplete: boolean;
-  timestamp: number;
 }
 
 export const ToolExecutionLog: React.FC<ToolExecutionLogProps> = ({ steps }) => {
@@ -28,62 +21,6 @@ export const ToolExecutionLog: React.FC<ToolExecutionLogProps> = ({ steps }) => 
     </div>
   );
 };
-
-function pairSteps(steps: AgentStep[]): PairedStep[] {
-  const result: PairedStep[] = [];
-
-  for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
-
-    if (step.type === 'text') {
-      result.push({
-        type: 'text',
-        content: step.content,
-        toolCalls: [],
-        toolResults: [],
-        isComplete: true,
-        timestamp: step.timestamp
-      });
-    } else if (step.type === 'tool_call') {
-      // Look ahead for tool_result that follows
-      const nextStep = steps[i + 1];
-      if (nextStep?.type === 'tool_result') {
-        result.push({
-          type: 'tool',
-          content: step.content,
-          toolCalls: step.toolCalls || [],
-          toolResults: nextStep.toolResults || [],
-          isComplete: true,
-          timestamp: step.timestamp
-        });
-        i++; // skip the tool_result step
-      } else {
-        // No result yet — still pending
-        result.push({
-          type: 'tool',
-          content: step.content,
-          toolCalls: step.toolCalls || [],
-          toolResults: [],
-          isComplete: false,
-          timestamp: step.timestamp
-        });
-      }
-    }
-    // tool_result without preceding tool_call (shouldn't happen, but handle gracefully)
-    else if (step.type === 'tool_result') {
-      result.push({
-        type: 'tool',
-        content: step.content,
-        toolCalls: [],
-        toolResults: step.toolResults || [],
-        isComplete: true,
-        timestamp: step.timestamp
-      });
-    }
-  }
-
-  return result;
-}
 
 const StepItem: React.FC<{ step: PairedStep; isLatest: boolean }> = ({ step, isLatest }) => {
   const [expanded, setExpanded] = useState(isLatest);
@@ -116,7 +53,7 @@ const StepItem: React.FC<{ step: PairedStep; isLatest: boolean }> = ({ step, isL
   );
 };
 
-const CombinedToolItem: React.FC<{
+export const CombinedToolItem: React.FC<{
   toolCall: ToolCall;
   toolResult?: ToolResult;
   isComplete: boolean;
