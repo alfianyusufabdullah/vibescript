@@ -9,18 +9,13 @@
       action: 'DIAGNOSTICS_LOG',
       payload: { message, type }
     }, '*');
-    // Also post to local log server
-    fetch('http://127.0.0.1:9999/log', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, type })
-    }).catch(() => {});
   }
 
   try {
     logDiagnostics('inject.js loaded in context: ' + window.location.href);
 
     const getMonaco = () => window.monaco;
+    const fileModelMap = new Map();
 
   function getActiveEditor() {
     const monaco = getMonaco();
@@ -277,55 +272,54 @@
 
       case 'LIST_FILES': {
         const monaco = getMonaco();
-        if (!monaco || !monaco.editor) {
-          window.postMessage({
-            source: 'vibescript-inject',
-            action: 'LIST_FILES_RESULT',
-            payload: { requestId: event.data.payload?.requestId, files: [] }
-          }, '*');
-          break;
-        }
 
-        // Diagnostic log: check DOM treeitems
+        // Extract file names from DOM sidebar (Google Apps Script file tree)
+        let files = [];
+        fileModelMap.clear();
         try {
-          const treeitems = Array.from(document.querySelectorAll('[role="treeitem"]'));
-          logDiagnostics(`Found ${treeitems.length} treeitems:`);
-          treeitems.forEach((item, idx) => {
-            logDiagnostics(`  [Treeitem ${idx}] text: "${item.textContent?.trim()}", class: "${item.className}", innerHTML: "${item.innerHTML.substring(0, 100)}"`);
-          });
+          const fileList = document.querySelector('ul[role="listbox"][aria-label="Project files"]');
+          if (fileList) {
+            const items = fileList.querySelectorAll('li[role="option"]');
+            const models = monaco && monaco.editor ? monaco.editor.getModels() : [];
+            let modelIdx = 0;
+            items.forEach((item) => {
+              const name = item.getAttribute('aria-label');
+              if (name && !name.startsWith('File operations')) {
+                const isSelected = item.getAttribute('aria-selected') === 'true' || item.classList.contains('UeVsd');
+                files.push({
+                  name: name,
+                  language: name.endsWith('.html') || name.endsWith('.htm') ? 'html' : 'javascript',
+                  isActive: isSelected
+                });
+                // Map file name to Monaco model by order (DOM order matches model order)
+                if (modelIdx < models.length) {
+                  fileModelMap.set(name, models[modelIdx]);
+                }
+                modelIdx++;
+              }
+            });
+          }
         } catch (e) {
-          logDiagnostics(`Error listing treeitems: ${e.message}`, 'error');
+          logDiagnostics(`DOM file list extraction failed: ${e.message}`, 'warn');
         }
 
-        // Diagnostic log: check Monaco models keys and properties
-        const activeEditor = getActiveEditor();
-        const activeModel = activeEditor ? activeEditor.getModel() : null;
-        const models = monaco.editor.getModels();
-        models.forEach((m, idx) => {
-          try {
-            logDiagnostics(`[Model ${idx}] URI: ${m.uri.toString()}, Keys: ${Object.keys(m).filter(k => typeof m[k] !== 'function').join(', ')}`);
-            // Check for hidden or private fields
-            for (const key in m) {
-              if (key.toLowerCase().includes('file') || key.toLowerCase().includes('name') || key.toLowerCase().includes('path') || key.toLowerCase().includes('title')) {
-                logDiagnostics(`  [Model ${idx}] private field ${key}: ${String(m[key])}`);
-              }
-            }
-          } catch (e) {
-            logDiagnostics(`Error listing model details: ${e.message}`, 'error');
-          }
-        });
-
-        const files = models
-          .map((model) => {
-            const path = model.uri.path;
-            const name = path.replace(/^\//, '');
-            return {
-              name: name || 'untitled',
-              language: model.getLanguageId(),
-              isActive: activeModel ? activeModel.uri.toString() === model.uri.toString() : false
-            };
-          })
-          .filter(file => file.name && !file.name.includes('output') && !file.name.includes('terminal') && !file.name.startsWith('inmemory'));
+        // Fallback: Monaco model URIs if DOM parsing fails
+        if (files.length === 0 && monaco && monaco.editor) {
+          const activeEditor = getActiveEditor();
+          const activeModel = activeEditor ? activeEditor.getModel() : null;
+          const models = monaco.editor.getModels();
+          files = models
+            .map((model) => {
+              const path = model.uri.path;
+              const name = path.replace(/^\//, '');
+              return {
+                name: name || 'untitled',
+                language: model.getLanguageId(),
+                isActive: activeModel ? activeModel.uri.toString() === model.uri.toString() : false
+              };
+            })
+            .filter(file => file.name && !file.name.includes('output') && !file.name.includes('terminal') && !file.name.startsWith('inmemory'));
+        }
 
         window.postMessage({
           source: 'vibescript-inject',
@@ -338,42 +332,46 @@
       case 'READ_FILE_BY_NAME': {
         const filename = event.data.payload?.filename;
         const reqId = event.data.payload?.requestId;
-        const monaco = getMonaco();
-        if (!monaco || !monaco.editor) {
+
+        // Look up model from fileModelMap (built by LIST_FILES) and read directly (no editor switch)
+        const model = fileModelMap.get(filename);
+
+        if (model) {
+          const code = model.getValue();
           window.postMessage({
             source: 'vibescript-inject',
             action: 'CODE_RESULT',
-            payload: { requestId: reqId, context: null }
-          }, '*');
-          break;
-        }
-
-        const targetModel = monaco.editor.getModels().find((model) => {
-          const name = model.uri.path.replace(/^\//, '');
-          return name === filename || model.uri.path.includes(filename);
-        });
-
-        if (targetModel) {
-          const code = targetModel.getValue();
-          const language = targetModel.getLanguageId();
-          const ctx = {
-            code,
-            language,
-            position: null,
-            selection: null,
-            selectedText: ''
-          };
-          window.postMessage({
-            source: 'vibescript-inject',
-            action: 'CODE_RESULT',
-            payload: { requestId: reqId, context: ctx }
+            payload: { requestId: reqId, context: { code, language: model.getLanguageId(), position: null, selection: null, selectedText: '' } }
           }, '*');
         } else {
-          window.postMessage({
-            source: 'vibescript-inject',
-            action: 'CODE_RESULT',
-            payload: { requestId: reqId, context: null }
-          }, '*');
+          // Fallback: try DOM click + active editor
+          try {
+            const fileItem = document.querySelector(`li[role="option"][aria-label="${filename.replace(/"/g, '\\"')}"]`);
+            if (fileItem) {
+              fileItem.click();
+              setTimeout(() => {
+                const editor = getActiveEditor();
+                if (editor) {
+                  const model = editor.getModel();
+                  if (model) {
+                    window.postMessage({
+                      source: 'vibescript-inject',
+                      action: 'CODE_RESULT',
+                      payload: { requestId: reqId, context: { code: model.getValue(), language: model.getLanguageId(), position: null, selection: null, selectedText: '' } }
+                    }, '*');
+                    return;
+                  }
+                }
+                window.postMessage({
+                  source: 'vibescript-inject',
+                  action: 'CODE_RESULT',
+                  payload: { requestId: reqId, context: null }
+                }, '*');
+              }, 200);
+            }
+          } catch (e) {
+            logDiagnostics(`DOM click for "${filename}" failed: ${e.message}`, 'warn');
+          }
         }
         break;
       }
