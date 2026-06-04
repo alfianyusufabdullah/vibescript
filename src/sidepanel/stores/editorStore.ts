@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import type { MonacoEditorContext, CodeAttachment } from '../../shared/types';
 
+let _editReviewTimeout: number | undefined;
+let _editReviewHandler: ((event: MessageEvent) => void) | undefined;
+
 export interface FileInfo {
   name: string;
   language: string;
@@ -271,11 +274,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           event.data?.action === 'DIFF_RESULT' &&
           event.data?.payload?.requestId === requestId
         ) {
+          if (_editReviewTimeout) { clearTimeout(_editReviewTimeout); _editReviewTimeout = undefined; }
           window.removeEventListener('message', handler);
+          if (_editReviewHandler === handler) _editReviewHandler = undefined;
           resolve(event.data.payload);
         }
       };
 
+      _editReviewHandler = handler;
       window.addEventListener('message', handler);
       window.postMessage({
         source: 'vibescript-content',
@@ -283,14 +289,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         payload: { requestId, search, replace }
       }, '*');
 
-      setTimeout(() => {
+      _editReviewTimeout = window.setTimeout(() => {
         window.removeEventListener('message', handler);
+        if (_editReviewHandler === handler) _editReviewHandler = undefined;
+        _editReviewTimeout = undefined;
         resolve({ approved: false, output: 'Timeout' });
-      }, 300000);
+      }, 60000);
     });
   },
 
   cancelDiffReview: () => {
+    if (_editReviewTimeout) { clearTimeout(_editReviewTimeout); _editReviewTimeout = undefined; }
+    if (_editReviewHandler) { window.removeEventListener('message', _editReviewHandler); _editReviewHandler = undefined; }
     window.postMessage({
       source: 'vibescript-content',
       action: 'EDIT_FILE_REVIEW_CANCEL',
