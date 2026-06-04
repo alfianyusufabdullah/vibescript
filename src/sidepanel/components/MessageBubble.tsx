@@ -1,98 +1,37 @@
-import React, { useState } from 'react';
-import type { ChatMessage } from '../../shared/types';
-import { useEditorStore } from '../stores/editorStore';
-import { ToolExecutionLog } from './ToolExecutionLog';
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from './ui/collapsible';
-import { Copy, Check, CornerDownLeft, FileText, Sparkles, User, ChevronRight } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import { Button } from './ui/button';
-import type { Components } from 'react-markdown';
+import React, { useMemo, useState } from 'react';
+import type { ChatMessage, ToolCall, ToolResult } from '../../shared/types';
+import { CombinedToolItem } from './ToolExecutionLog';
+import { pairSteps } from '../utils/agent';
+import { Sparkles, User } from 'lucide-react';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface MessageBubbleProps {
   message: ChatMessage;
 }
 
-export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
-  const { insertAtCursor, replaceSelection } = useEditorStore();
-  const [copiedMap, setCopiedMap] = useState<Record<string, number>>({});
+const InlineToolWrapper: React.FC<{
+  toolCall: ToolCall;
+  toolResult?: ToolResult;
+  isComplete: boolean;
+}> = ({ toolCall, toolResult, isComplete }) => {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <CombinedToolItem
+      toolCall={toolCall}
+      toolResult={toolResult}
+      isComplete={isComplete}
+      expanded={expanded}
+      onToggle={() => setExpanded(!expanded)}
+    />
+  );
+};
 
+export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const isAssistant = message.role === 'assistant';
 
-  const handleCopy = (code: string, blockIndex: number) => {
-    navigator.clipboard.writeText(code);
-    setCopiedMap(prev => ({ ...prev, [blockIndex]: Date.now() }));
-    setTimeout(() => {
-      setCopiedMap(prev => {
-        const next = { ...prev };
-        delete next[blockIndex];
-        return next;
-      });
-    }, 2000);
-  };
-
-  const justCopied = (blockIndex: number) => !!copiedMap[blockIndex];
-
-  let codeBlockIndex = 0;
-
-  const markdownComponents: Components = {
-    code: ({ className, children, ...props }) => {
-      const match = /language-(\w+)/.exec(className || '');
-      const isInline = !match;
-      if (isInline) {
-        return <code className="text-[11px] bg-zinc-100 border border-zinc-200 rounded px-1 py-0.5 font-mono text-zinc-800" {...props}>{children}</code>;
-      }
-      const code = String(children).replace(/\n$/, '');
-      const idx = codeBlockIndex++;
-
-      return (
-        <div className="w-full bg-white border border-zinc-200 rounded-lg overflow-hidden mt-2 mb-2 shadow-sm">
-          <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-50 border-b border-zinc-200 text-[10px] text-zinc-500 font-medium">
-            <span className="text-[9px] text-zinc-400 font-mono">{match?.[1] || 'code'}</span>
-            <div className="flex items-center gap-1.5">
-              <Button
-                onClick={() => handleCopy(code, idx)}
-                variant="outline"
-                className="h-6 px-1.5 py-0 text-[9px] font-sans font-medium text-zinc-600 bg-white"
-              >
-                {justCopied(idx) ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3 text-zinc-400" />}
-                {justCopied(idx) ? 'Copied' : 'Copy'}
-              </Button>
-              <Button
-                onClick={() => insertAtCursor(code)}
-                variant="outline"
-                className="h-6 px-1.5 py-0 text-[9px] font-sans font-medium text-zinc-600 bg-white"
-              >
-                <CornerDownLeft className="w-3 h-3 text-zinc-400" />
-                Insert
-              </Button>
-              <Button
-                onClick={() => replaceSelection(code)}
-                variant="outline"
-                className="h-6 px-1.5 py-0 text-[9px] font-sans font-medium text-zinc-600 bg-white"
-              >
-                <FileText className="w-3 h-3 text-zinc-400" />
-                Replace
-              </Button>
-            </div>
-          </div>
-          <div className="p-3 bg-zinc-50 overflow-x-auto">
-            <pre className="text-xs text-zinc-800 font-mono whitespace-pre bg-transparent border-0 p-0 m-0 leading-relaxed select-text">
-              <code>{code}</code>
-            </pre>
-          </div>
-        </div>
-      );
-    },
-    p: ({ children }) => <p className="text-xs leading-relaxed my-1.5 text-zinc-800">{children}</p>,
-    ul: ({ children }) => <ul className="text-xs leading-relaxed my-1.5 list-disc pl-5 text-zinc-800">{children}</ul>,
-    ol: ({ children }) => <ol className="text-xs leading-relaxed my-1.5 list-decimal pl-5 text-zinc-800">{children}</ol>,
-    li: ({ children }) => <li className="my-0.5">{children}</li>,
-    h1: ({ children }) => <h1 className="text-sm font-bold my-2 text-zinc-900">{children}</h1>,
-    h2: ({ children }) => <h2 className="text-xs font-bold my-1.5 text-zinc-900">{children}</h2>,
-    h3: ({ children }) => <h3 className="text-xs font-semibold my-1 text-zinc-900">{children}</h3>,
-    strong: ({ children }) => <strong className="font-semibold text-zinc-900">{children}</strong>,
-    em: ({ children }) => <em className="italic">{children}</em>,
-  };
+  const pairedSteps = useMemo(() => {
+    return message.agentSteps ? pairSteps(message.agentSteps) : [];
+  }, [message.agentSteps]);
 
   return (
     <div
@@ -118,27 +57,35 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
       </div>
 
       {isAssistant ? (
-        <>
-          <div className="max-w-[88%] rounded-lg px-3.5 py-2.5 bg-white border border-zinc-200 rounded-tl-none shadow-sm">
-            <ReactMarkdown components={markdownComponents}>
-              {message.content}
-            </ReactMarkdown>
+        pairedSteps.length === 0 ? (
+          <MarkdownRenderer
+            content={message.content}
+            className="max-w-[88%] rounded-lg px-3.5 py-2.5 bg-white border border-zinc-200 rounded-tl-none shadow-sm"
+          />
+        ) : (
+          <div className="max-w-[88%] rounded-lg px-3.5 py-2.5 bg-white border border-zinc-200 rounded-tl-none shadow-sm space-y-3">
+            {pairedSteps.map((step, idx) => (
+              <React.Fragment key={idx}>
+                {step.content && <MarkdownRenderer content={step.content} />}
+                {step.toolCalls.length > 0 && (
+                  <div className="space-y-1.5 my-1.5">
+                    {step.toolCalls.map((tc, i) => {
+                      const result = step.toolResults.find(r => r.name === tc.name) || step.toolResults[i];
+                      return (
+                        <InlineToolWrapper
+                          key={i}
+                          toolCall={tc}
+                          toolResult={result}
+                          isComplete={step.isComplete}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+              </React.Fragment>
+            ))}
           </div>
-
-          {message.agentSteps && message.agentSteps.length > 0 && (
-            <div className="w-[88%] mt-2">
-              <Collapsible className="border border-zinc-200 rounded-md overflow-hidden">
-                <CollapsibleTrigger className="px-3 py-2 text-[10px] text-zinc-400 font-medium hover:text-zinc-600 hover:bg-zinc-50 transition-colors">
-                  <ChevronRight className="w-3 h-3" />
-                  Tool execution log ({message.agentSteps.length} steps)
-                </CollapsibleTrigger>
-                <CollapsibleContent className="px-3 py-2">
-                  <ToolExecutionLog steps={message.agentSteps} />
-                </CollapsibleContent>
-              </Collapsible>
-            </div>
-          )}
-        </>
+        )
       ) : (
         <div className="max-w-[88%] rounded-lg px-3.5 py-2.5 bg-zinc-900 text-zinc-50 border border-zinc-900 rounded-tr-none shadow-sm">
           <div className="text-xs leading-relaxed whitespace-pre-wrap">{message.content}</div>
