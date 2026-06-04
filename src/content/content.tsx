@@ -184,11 +184,13 @@ window.addEventListener('message', (event) => {
         }, '*');
       });
     } else {
-      // Forward Monaco events/results (MONACO_READY, ATTACH_SELECTION, CODE_RESULT, etc.) up to background
+      // Forward Monaco events/results (DIFF_RESULT, CODE_RESULT, etc.) up to background
       chrome.runtime.sendMessage({
         source: 'vibescript-content',
         action,
         payload
+      }).catch((err) => {
+        console.error('[VibeScript Content] Failed to forward ' + action + ' to background:', err.message);
       });
     }
   }
@@ -209,7 +211,9 @@ window.addEventListener('message', (event) => {
   if (data.source === 'vibescript-content' && window === window.top) {
     if (sidepanelRequests.includes(data.action)) {
       useDiagnosticsStore.getState().addLog('[Content] Forwarding sidepanel message to background: ' + data.action);
-      chrome.runtime.sendMessage(data);
+      chrome.runtime.sendMessage(data).catch((err) => {
+        console.error('[VibeScript Content] Failed to forward ' + data.action + ' to background:', err.message);
+      });
     }
   }
 });
