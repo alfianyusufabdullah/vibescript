@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useMemo } from 'react';
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import { useEditorStore, type FileInfo } from '../stores/editorStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -8,11 +8,15 @@ import { MessageBubble } from './MessageBubble';
 import { MentionInput } from './MentionInput';
 import { CombinedToolItem } from './ToolExecutionLog';
 import { pairSteps } from '../utils/agent';
-import { Send, Trash2, Code, Sparkles, FileWarning, Loader2, StopCircle, Copy, Check } from 'lucide-react';
+import { Send, Trash2, Code, Sparkles, FileWarning, Loader2, StopCircle, Copy, Check, ChevronDown, Brain, Plus } from 'lucide-react';
 import { Button } from './ui/button';
 import { preprocessStreamingMarkdown } from '../utils/markdown';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import type { CodeAttachment } from '../../shared/types';
+import type { AgentSession } from '../../shared/types';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { AGENT_ROLES } from '../../shared/agents';
+import { sessionManager } from '../services/sessionManager';
 
 export const ChatView: React.FC = () => {
   const { messages, isLoading, error, clearHistory } = useChatStore();
@@ -29,6 +33,8 @@ export const ChatView: React.FC = () => {
     steps: agentSteps,
     error: agentError,
     currentStepText,
+    currentRole,
+    reasoningText,
     cancel: cancelAgent,
     reset: resetAgent
   } = useAgentStore();
@@ -44,6 +50,83 @@ export const ChatView: React.FC = () => {
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
   const [autocompleteTriggerIndex, setAutocompleteTriggerIndex] = useState(0);
   const [openFilesList, setOpenFilesList] = useState<FileInfo[]>([]);
+  const [sessions, setSessions] = useState<AgentSession[]>([]);
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  // Load sessions for current project
+  const loadSessions = useCallback(async () => {
+    const sid = scriptId || 'global';
+    const sessList = await sessionManager.listSessions(sid);
+    setSessions(sessList);
+  }, [scriptId]);
+
+  useEffect(() => {
+    loadSessions();
+  }, [scriptId, agentStatus, loadSessions]);
+
+  const handleNewSession = useCallback(async () => {
+    const sid = scriptId || 'global';
+    // save current session messages and deactivate it
+    const currentId = sessionManager.getCurrentSessionId();
+    if (currentId) {
+      const sess = await sessionManager.loadSession(sid, currentId);
+      if (sess) {
+        sess.status = 'paused';
+        await sessionManager.updateSessionMessages(sess, messages, [], { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+      }
+    }
+    // clear chat and create new session
+    useChatStore.getState().setMessages([]);
+    const newSess = await sessionManager.startNewSession(sid, 'build');
+    sessionManager.setCurrentSession(newSess.id);
+    await sessionManager.deactivateOtherSessions(sid, newSess.id);
+    await loadSessions();
+  }, [scriptId, messages, loadSessions]);
+
+  const handleSwitchSession = useCallback(async (sess: AgentSession) => {
+    const sid = scriptId || 'global';
+    // save current session as paused
+    const currentId = sessionManager.getCurrentSessionId();
+    if (currentId && currentId !== sess.id) {
+      const currentSess = await sessionManager.loadSession(sid, currentId);
+      if (currentSess) {
+        currentSess.status = 'paused';
+        await sessionManager.updateSessionMessages(currentSess, messages, [], { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+      }
+    }
+    // deactivate all other sessions, activate selected
+    await sessionManager.deactivateOtherSessions(sid, sess.id);
+    // load selected session
+    const loaded = await sessionManager.loadSession(sid, sess.id);
+    if (loaded) {
+      loaded.status = 'active';
+      await sessionManager.saveSession(loaded);
+      useChatStore.getState().setMessages(loaded.messages || []);
+    }
+    await loadSessions();
+  }, [scriptId, messages, loadSessions]);
+
+  const handleDeleteSession = useCallback(async (e: React.MouseEvent, sessId: string) => {
+    e.stopPropagation();
+    const sid = scriptId || 'global';
+    await sessionManager.deleteSession(sid, sessId);
+    // if deleted current session, clear chat
+    if (sessionManager.getCurrentSessionId() === sessId) {
+      useChatStore.getState().setMessages([]);
+      sessionManager.setCurrentSession(null);
+    }
+    await loadSessions();
+  }, [scriptId, loadSessions]);
+
+  const handleRenameSession = useCallback(async (sessId: string, newLabel: string) => {
+    if (newLabel.trim()) {
+      const sid = scriptId || 'global';
+      await sessionManager.renameSession(sid, sessId, newLabel.trim());
+      await loadSessions();
+    }
+    setRenamingSessionId(null);
+  }, [scriptId, loadSessions]);
 
   const pairedAgentSteps = useMemo(() => {
     return pairSteps(agentSteps);
@@ -74,6 +157,13 @@ export const ChatView: React.FC = () => {
       f.name.toLowerCase().includes(autocompleteQuery.toLowerCase())
     );
   }, [openFilesList, autocompleteQuery]);
+
+  const filteredAgents = useMemo(() => {
+    if (!autocompleteQuery) return Object.values(AGENT_ROLES);
+    return Object.values(AGENT_ROLES).filter((r) =>
+      r.id.toLowerCase().includes(autocompleteQuery.toLowerCase())
+    );
+  }, [autocompleteQuery]);
 
   const selectFile = async (fileName: string) => {
     const context = await useEditorStore.getState().readFileByName(fileName);
@@ -260,11 +350,22 @@ export const ChatView: React.FC = () => {
     const match = textBeforeCursor.match(/@([a-zA-Z0-9_\-.]*)$/);
 
     if (match) {
-      setShowAutocomplete(true);
-      setAutocompleteQuery(match[1]);
-      setAutocompleteTriggerIndex(selectionStart - match[1].length - 1);
-      setAutocompleteIndex(0);
-      fetchOpenFiles();
+      const query = match[1].toLowerCase();
+      const agentMatch = Object.values(AGENT_ROLES).find((r) => r.id.startsWith(query));
+      if (agentMatch && query.length > 0) {
+        // Agent mentions don't need file autocomplete
+        setShowAutocomplete(true);
+        setAutocompleteQuery(match[1]);
+        setAutocompleteTriggerIndex(selectionStart - match[1].length - 1);
+        setAutocompleteIndex(0);
+        fetchOpenFiles();
+      } else {
+        setShowAutocomplete(true);
+        setAutocompleteQuery(match[1]);
+        setAutocompleteTriggerIndex(selectionStart - match[1].length - 1);
+        setAutocompleteIndex(0);
+        fetchOpenFiles();
+      }
     } else {
       setShowAutocomplete(false);
     }
@@ -317,9 +418,9 @@ export const ChatView: React.FC = () => {
         {isAgentRunning && (
           <div className="flex flex-col gap-1 w-full animate-fade-in items-start">
             <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 px-1 font-medium tracking-tight">
-              <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+              <Sparkles className={`w-3.5 h-3.5 ${currentRole?.id === 'explore' ? 'text-blue-500' : currentRole?.id === 'plan' ? 'text-purple-500' : 'text-amber-500'} animate-pulse`} />
               <span className="text-zinc-700 font-semibold">
-                {agentStatus === 'thinking' ? 'AI Assistant (thinking)' : 'AI Assistant (executing tools)'}
+                {currentRole?.label || 'AI Assistant'} {agentStatus === 'thinking' ? '(thinking)' : '(executing tools)'}
               </span>
               <button
                 onClick={cancelAgent}
@@ -360,6 +461,18 @@ export const ChatView: React.FC = () => {
                       )}
                     </React.Fragment>
                   ))}
+                  {reasoningText && (
+                    <details className="group text-[11px]">
+                      <summary className="flex items-center gap-1.5 cursor-pointer text-zinc-500 hover:text-zinc-700 font-medium select-none">
+                        <ChevronDown className="w-3 h-3 group-open:rotate-0 -rotate-90 transition-transform" />
+                        <Brain className="w-3.5 h-3.5" />
+                        Thinking
+                      </summary>
+                      <div className="mt-1.5 p-2.5 rounded-md bg-zinc-50 border border-zinc-200 text-zinc-600 text-[10.5px] leading-relaxed whitespace-pre-wrap font-mono">
+                        {reasoningText}
+                      </div>
+                    </details>
+                  )}
                   {currentStepText && (
                     <MarkdownRenderer
                       content={preprocessStreamingMarkdown(currentStepText, true)}
@@ -382,7 +495,7 @@ export const ChatView: React.FC = () => {
           <div className="flex flex-col gap-1 w-full animate-fade-in items-start">
             <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 px-1 font-medium tracking-tight">
               <Sparkles className="w-3.5 h-3.5 text-red-500" />
-              <span className="text-zinc-700 font-semibold">AI Assistant (failed)</span>
+              <span className="text-zinc-700 font-semibold">{currentRole?.label || 'AI Assistant'} (failed)</span>
             </div>
 
             <div className="max-w-[88%] w-full rounded-lg px-3.5 py-2.5 bg-white border border-zinc-200 rounded-tl-none shadow-sm space-y-3">
@@ -438,28 +551,60 @@ export const ChatView: React.FC = () => {
       {/* Footer input section */}
       <div className="p-4 bg-white border-t border-zinc-200 flex flex-col gap-2.5 relative">
         {/* Autocomplete Dropdown */}
-        {showAutocomplete && filteredFiles.length > 0 && (
-          <div className="absolute left-4 bottom-[calc(100%-8px)] mb-2 w-64 bg-white border border-zinc-250 rounded-lg shadow-lg overflow-hidden z-50 max-h-48 overflow-y-auto">
-            <div className="px-2.5 py-1.5 text-[9px] font-bold text-zinc-400 border-b border-zinc-100 uppercase tracking-wider bg-zinc-50/50">
-              Mention File
-            </div>
-            {filteredFiles.map((file, idx) => (
-              <button
-                key={file.name}
-                type="button"
-                onClick={() => selectFile(file.name)}
-                className={`w-full text-left px-3 py-1.5 flex items-center justify-between text-[11.5px] transition-colors border-b border-zinc-50 last:border-0 ${
-                  idx === autocompleteIndex ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-650 hover:bg-zinc-50'
-                }`}
-              >
-                <span className="font-medium truncate">{file.name}</span>
-                {file.isActive && (
-                  <span className="text-[9px] bg-emerald-50 text-emerald-600 border border-emerald-200 px-1.5 py-0.5 rounded font-semibold scale-90">
-                    Active
-                  </span>
-                )}
-              </button>
-            ))}
+        {showAutocomplete && (filteredFiles.length > 0 || filteredAgents.length > 0) && (
+          <div className="absolute left-4 bottom-[calc(100%-8px)] mb-2 w-72 bg-white border border-zinc-250 rounded-lg shadow-lg overflow-hidden z-50 max-h-56 overflow-y-auto">
+            {filteredAgents.length > 0 && (
+              <>
+                <div className="px-2.5 py-1.5 text-[9px] font-bold text-zinc-400 border-b border-zinc-100 uppercase tracking-wider bg-zinc-50/50">
+                  Agents
+                </div>
+                {filteredAgents.map((agent, idx) => (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    onClick={() => {
+                      const text = textareaRef.current?.value || '';
+                      const before = text.substring(0, autocompleteTriggerIndex);
+                      const after = text.substring(textareaRef.current?.selectionStart || 0);
+                      const mentionString = `@${agent.id}`;
+                      const newText = before + mentionString + ' ' + after;
+                      setDraftInput(newText);
+                      setShowAutocomplete(false);
+                    }}
+                    className={`w-full text-left px-3 py-1.5 flex items-center justify-between text-[11.5px] transition-colors border-b border-zinc-50 last:border-0 ${
+                      idx === autocompleteIndex ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-650 hover:bg-zinc-50'
+                    }`}
+                  >
+                    <span className="font-medium truncate">{agent.label}</span>
+                    <span className="text-[9px] text-zinc-400 truncate max-w-[140px]">{agent.description}</span>
+                  </button>
+                ))}
+              </>
+            )}
+            {filteredFiles.length > 0 && (
+              <>
+                <div className="px-2.5 py-1.5 text-[9px] font-bold text-zinc-400 border-b border-zinc-100 uppercase tracking-wider bg-zinc-50/50">
+                  Files
+                </div>
+                {filteredFiles.map((file, idx) => (
+                  <button
+                    key={file.name}
+                    type="button"
+                    onClick={() => selectFile(file.name)}
+                    className={`w-full text-left px-3 py-1.5 flex items-center justify-between text-[11.5px] transition-colors border-b border-zinc-50 last:border-0 ${
+                      idx === autocompleteIndex ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-650 hover:bg-zinc-50'
+                    }`}
+                  >
+                    <span className="font-medium truncate">{file.name}</span>
+                    {file.isActive && (
+                      <span className="text-[9px] bg-emerald-50 text-emerald-600 border border-emerald-200 px-1.5 py-0.5 rounded font-semibold scale-90">
+                        Active
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </>
+            )}
           </div>
         )}
 
@@ -476,6 +621,78 @@ export const ChatView: React.FC = () => {
                 <span className="w-1.5 h-1.5 rounded-full bg-zinc-300" />
                 Disconnected
               </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleNewSession}
+              className="text-[10px] text-zinc-400 hover:text-zinc-700 flex items-center gap-1 font-medium uppercase tracking-wide cursor-pointer bg-transparent border-0 p-0"
+              title="New session"
+            >
+              <Plus className="w-3 h-3" />
+              New
+            </button>
+            {sessions.length > 0 && (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button className="text-[10px] text-zinc-400 hover:text-zinc-700 flex items-center gap-1 font-medium uppercase tracking-wide cursor-pointer bg-transparent border-0 p-0">
+                    {sessions.length} session{sessions.length !== 1 ? 's' : ''}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" side="bottom" className="w-72 p-0 max-h-80 overflow-y-auto">
+                  <div className="sticky top-0 px-3 py-2 text-[9px] font-bold text-zinc-400 border-b border-zinc-100 uppercase tracking-wider bg-white">
+                    Sessions
+                  </div>
+                  {sessions.map((sess) => (
+                    <div
+                      key={sess.id}
+                      className="group flex items-center gap-1 px-3 py-2 text-[11px] transition-colors border-b border-zinc-50 last:border-0 hover:bg-zinc-50 cursor-pointer"
+                      onClick={() => handleSwitchSession(sess)}
+                    >
+                      {renamingSessionId === sess.id ? (
+                        <input
+                          autoFocus
+                          className="flex-1 text-[11px] px-1 py-0.5 border border-zinc-300 rounded bg-white outline-none"
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onBlur={() => handleRenameSession(sess.id, renameValue)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleRenameSession(sess.id, renameValue);
+                            if (e.key === 'Escape') setRenamingSessionId(null);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <span
+                          className="flex-1 truncate font-medium"
+                          onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            setRenamingSessionId(sess.id);
+                            setRenameValue(sess.label);
+                          }}
+                          title="Double-click to rename"
+                        >
+                          {sess.label}
+                        </span>
+                      )}
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-semibold whitespace-nowrap ${
+                        sess.status === 'active' ? 'bg-amber-50 text-amber-600 border border-amber-200' :
+                        'bg-zinc-100 text-zinc-500'
+                      }`}>
+                        {sess.status}
+                      </span>
+                      <button
+                        onClick={(e) => handleDeleteSession(e, sess.id)}
+                        className="opacity-0 group-hover:opacity-100 ml-1 p-0.5 rounded hover:bg-red-100 text-zinc-400 hover:text-red-600 transition-all cursor-pointer"
+                        title="Delete session"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </PopoverContent>
+              </Popover>
             )}
           </div>
 
