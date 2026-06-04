@@ -28,13 +28,23 @@ export const editFileTool: Tool = {
 
     const result = await ctx.editorStore.editFileWithReview(search, replace);
 
-    if (!result.approved) {
+    if (result.approved === false) {
       return {
         toolCallId: '',
         name: 'edit_file',
         success: false,
         output: result.output,
         error: 'USER_REJECTED',
+      };
+    }
+
+    if (result.approved !== true) {
+      return {
+        toolCallId: '',
+        name: 'edit_file',
+        success: false,
+        output: result.output,
+        error: result.output || 'Diff review did not return approval',
       };
     }
 
