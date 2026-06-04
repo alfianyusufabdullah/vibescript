@@ -18,6 +18,7 @@ import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { AGENT_ROLES } from '../../shared/agents';
 import { sessionManager } from '../services/sessionManager';
 
+
 export const ChatView: React.FC = () => {
   const { messages, isLoading, error, clearHistory } = useChatStore();
   const {
@@ -552,10 +553,10 @@ export const ChatView: React.FC = () => {
       <div className="p-4 bg-white border-t border-zinc-200 flex flex-col gap-2.5 relative">
         {/* Autocomplete Dropdown */}
         {showAutocomplete && (filteredFiles.length > 0 || filteredAgents.length > 0) && (
-          <div className="absolute left-4 bottom-[calc(100%-8px)] mb-2 w-72 bg-white border border-zinc-250 rounded-lg shadow-lg overflow-hidden z-50 max-h-56 overflow-y-auto">
+          <div className="absolute left-0 bottom-[calc(100%+8px)] z-50 w-72 bg-popover border border-border rounded-md shadow-md overflow-hidden max-h-56 overflow-y-auto p-1">
             {filteredAgents.length > 0 && (
               <>
-                <div className="px-2.5 py-1.5 text-[9px] font-bold text-zinc-400 border-b border-zinc-100 uppercase tracking-wider bg-zinc-50/50">
+                <div className="px-2 py-1.5 text-[9px] font-bold text-muted-foreground uppercase tracking-wider bg-popover">
                   Agents
                 </div>
                 {filteredAgents.map((agent, idx) => (
@@ -571,19 +572,19 @@ export const ChatView: React.FC = () => {
                       setDraftInput(newText);
                       setShowAutocomplete(false);
                     }}
-                    className={`w-full text-left px-3 py-1.5 flex items-center justify-between text-[11.5px] transition-colors border-b border-zinc-50 last:border-0 ${
-                      idx === autocompleteIndex ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-650 hover:bg-zinc-50'
+                    className={`w-full text-left px-2 py-1.5 flex items-center justify-between text-xs transition-colors rounded-sm cursor-pointer ${
+                      idx === autocompleteIndex ? 'bg-accent text-accent-foreground font-medium' : 'text-foreground hover:bg-accent/50 hover:text-accent-foreground'
                     }`}
                   >
-                    <span className="font-medium truncate">{agent.label}</span>
-                    <span className="text-[9px] text-zinc-400 truncate max-w-[140px]">{agent.description}</span>
+                    <span className="truncate">{agent.label}</span>
+                    <span className="text-[9px] text-muted-foreground truncate max-w-[140px]">{agent.description}</span>
                   </button>
                 ))}
               </>
             )}
             {filteredFiles.length > 0 && (
               <>
-                <div className="px-2.5 py-1.5 text-[9px] font-bold text-zinc-400 border-b border-zinc-100 uppercase tracking-wider bg-zinc-50/50">
+                <div className="px-2 py-1.5 text-[9px] font-bold text-muted-foreground uppercase tracking-wider bg-popover">
                   Files
                 </div>
                 {filteredFiles.map((file, idx) => (
@@ -591,13 +592,13 @@ export const ChatView: React.FC = () => {
                     key={file.name}
                     type="button"
                     onClick={() => selectFile(file.name)}
-                    className={`w-full text-left px-3 py-1.5 flex items-center justify-between text-[11.5px] transition-colors border-b border-zinc-50 last:border-0 ${
-                      idx === autocompleteIndex ? 'bg-zinc-100 text-zinc-900' : 'text-zinc-650 hover:bg-zinc-50'
+                    className={`w-full text-left px-2 py-1.5 flex items-center justify-between text-xs transition-colors rounded-sm cursor-pointer ${
+                      idx === autocompleteIndex ? 'bg-accent text-accent-foreground font-medium' : 'text-foreground hover:bg-accent/50 hover:text-accent-foreground'
                     }`}
                   >
-                    <span className="font-medium truncate">{file.name}</span>
+                    <span className="truncate">{file.name}</span>
                     {file.isActive && (
-                      <span className="text-[9px] bg-emerald-50 text-emerald-600 border border-emerald-200 px-1.5 py-0.5 rounded font-semibold scale-90">
+                      <span className="text-[9px] bg-emerald-50 text-emerald-600 border border-emerald-250 px-1.5 py-0.5 rounded font-semibold scale-90">
                         Active
                       </span>
                     )}
@@ -608,13 +609,17 @@ export const ChatView: React.FC = () => {
           </div>
         )}
 
-        {/* Context Attachment Badge */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-[10px]">
+        {/* Top Control Bar (Status & Sessional Management) */}
+        <div className="flex items-center justify-between px-1 text-[11px]">
+          {/* Connection Status Badge */}
+          <div className="flex items-center gap-2">
             {isActiveTabAppsScript ? (
-              <span className="flex items-center gap-1.5 text-zinc-700 font-medium bg-zinc-100 border border-zinc-200 px-2 py-0.5 rounded-md">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                Active Connection
+              <span 
+                className="flex items-center gap-1.5 text-zinc-700 font-medium bg-zinc-100 border border-zinc-200 px-2 py-0.5 rounded-md"
+                title={currentContext?.filename || 'Connected to editor'}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Connected: {currentContext?.filename || 'No active file'}
               </span>
             ) : (
               <span className="flex items-center gap-1.5 text-zinc-500 font-medium bg-zinc-100/50 border border-zinc-200 px-2 py-0.5 rounded-md">
@@ -624,10 +629,11 @@ export const ChatView: React.FC = () => {
             )}
           </div>
 
-          <div className="flex items-center gap-1">
+          {/* Sessional Controls */}
+          <div className="flex items-center gap-3">
             <button
               onClick={handleNewSession}
-              className="text-[10px] text-zinc-400 hover:text-zinc-700 flex items-center gap-1 font-medium uppercase tracking-wide cursor-pointer bg-transparent border-0 p-0"
+              className="text-[10px] text-zinc-400 hover:text-zinc-700 flex items-center gap-1 font-semibold uppercase tracking-wide cursor-pointer bg-transparent border-0 p-0 transition-colors"
               title="New session"
             >
               <Plus className="w-3 h-3" />
@@ -636,24 +642,25 @@ export const ChatView: React.FC = () => {
             {sessions.length > 0 && (
               <Popover>
                 <PopoverTrigger asChild>
-                  <button className="text-[10px] text-zinc-400 hover:text-zinc-700 flex items-center gap-1 font-medium uppercase tracking-wide cursor-pointer bg-transparent border-0 p-0">
+                  <button className="text-[10px] text-zinc-400 hover:text-zinc-700 flex items-center gap-1 font-semibold uppercase tracking-wide cursor-pointer bg-transparent border-0 p-0 transition-colors">
                     {sessions.length} session{sessions.length !== 1 ? 's' : ''}
+                    <ChevronDown className="w-3 h-3 opacity-60" />
                   </button>
                 </PopoverTrigger>
-                <PopoverContent align="start" side="bottom" className="w-72 p-0 max-h-80 overflow-y-auto">
-                  <div className="sticky top-0 px-3 py-2 text-[9px] font-bold text-zinc-400 border-b border-zinc-100 uppercase tracking-wider bg-white">
+                <PopoverContent align="end" side="bottom" className="w-64 p-1 max-h-80 overflow-y-auto">
+                  <div className="sticky top-0 px-2 py-1.5 text-[9px] font-bold text-muted-foreground uppercase tracking-wider bg-popover border-b border-border mb-1">
                     Sessions
                   </div>
                   {sessions.map((sess) => (
                     <div
                       key={sess.id}
-                      className="group flex items-center gap-1 px-3 py-2 text-[11px] transition-colors border-b border-zinc-50 last:border-0 hover:bg-zinc-50 cursor-pointer"
+                      className="group flex items-center gap-2 px-2 py-1.5 text-xs rounded-sm transition-colors cursor-pointer hover:bg-accent hover:text-accent-foreground text-foreground"
                       onClick={() => handleSwitchSession(sess)}
                     >
                       {renamingSessionId === sess.id ? (
                         <input
                           autoFocus
-                          className="flex-1 text-[11px] px-1 py-0.5 border border-zinc-300 rounded bg-white outline-none"
+                          className="flex-1 text-xs px-1.5 py-0.5 border border-border rounded bg-background text-foreground outline-none"
                           value={renameValue}
                           onChange={(e) => setRenameValue(e.target.value)}
                           onBlur={() => handleRenameSession(sess.id, renameValue)}
@@ -684,7 +691,7 @@ export const ChatView: React.FC = () => {
                       </span>
                       <button
                         onClick={(e) => handleDeleteSession(e, sess.id)}
-                        className="opacity-0 group-hover:opacity-100 ml-1 p-0.5 rounded hover:bg-red-100 text-zinc-400 hover:text-red-600 transition-all cursor-pointer"
+                        className="opacity-0 group-hover:opacity-100 ml-1 p-0.5 rounded hover:bg-red-100 text-zinc-400 hover:text-red-600 transition-all cursor-pointer border-0 bg-transparent"
                         title="Delete session"
                       >
                         <Trash2 className="w-3 h-3" />
@@ -695,36 +702,10 @@ export const ChatView: React.FC = () => {
               </Popover>
             )}
           </div>
-
-          {messages.length > 0 && (
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={handleCopyHistory}
-                variant="ghost"
-                size="sm"
-                className="text-[10px] h-auto p-0 hover:bg-transparent text-zinc-400 hover:text-zinc-700 flex items-center gap-1 font-medium uppercase tracking-wide cursor-pointer"
-                title="Copy chat history to clipboard"
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-650" /> : <Copy className="w-3.5 h-3.5" />}
-                {copied ? 'Copied' : 'Copy'}
-              </Button>
-              <Button
-                onClick={() => clearHistory(activeScriptId)}
-                variant="ghost"
-                size="sm"
-                className="text-[10px] h-auto p-0 hover:bg-transparent text-zinc-400 hover:text-zinc-700 flex items-center gap-1 font-medium uppercase tracking-wide cursor-pointer"
-                title="Clear chat history for this project"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Reset History
-              </Button>
-            </div>
-          )}
         </div>
 
-
-        {/* Input Text Area */}
-        <div className="relative flex items-end bg-zinc-100/50 border border-zinc-200 focus-within:border-zinc-350 focus-within:bg-white rounded-lg overflow-hidden px-3 py-2 transition-all duration-150 shadow-sm">
+        {/* Input Card Container */}
+        <div className="flex flex-col bg-zinc-100/50 border border-zinc-200 focus-within:border-zinc-350 focus-within:bg-white rounded-lg overflow-hidden transition-all duration-150 shadow-sm p-2 gap-1.5">
           <MentionInput
             textareaRef={textareaRef}
             value={draftInput}
@@ -732,16 +713,50 @@ export const ChatView: React.FC = () => {
             onKeyDown={handleKeyDown}
             placeholder={isActiveTabAppsScript ? "Ask AI or say 'create a function to...'" : "Connect Apps Script to start coding..."}
             disabled={!isActiveTabAppsScript && messages.length === 0}
-            className="w-full text-xs text-zinc-900 placeholder-zinc-400"
+            className="w-full min-h-[44px] text-xs text-zinc-900 placeholder-zinc-400 focus:outline-none resize-none bg-transparent border-0 p-0"
           />
-          <Button
-            onClick={handleSend}
-            disabled={isLoading || !draftInput.trim()}
-            size="icon"
-            className="absolute right-2 bottom-2 h-7 w-7 rounded-md cursor-pointer"
-          >
-            <Send className="w-3.5 h-3.5" />
-          </Button>
+
+          {/* Action Toolbar */}
+          <div className="flex items-center justify-between mt-0.5">
+            {/* Left Actions: Copy & Reset */}
+            <div className="flex items-center gap-1">
+              {messages.length > 0 && (
+                <>
+                  <Button
+                    onClick={handleCopyHistory}
+                    variant="ghost"
+                    size="sm"
+                    className="text-[10px] h-7 px-2 hover:bg-zinc-200/50 text-zinc-500 hover:text-zinc-900 flex items-center gap-1 font-medium cursor-pointer"
+                    title="Copy chat history to clipboard"
+                  >
+                    {copied ? <Check className="w-3.5 h-3.5 text-emerald-650" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copied ? 'Copied' : 'Copy'}
+                  </Button>
+                  <Button
+                    onClick={() => clearHistory(activeScriptId)}
+                    variant="ghost"
+                    size="sm"
+                    className="text-[10px] h-7 px-2 hover:bg-zinc-200/50 text-zinc-500 hover:text-zinc-900 flex items-center gap-1 font-medium cursor-pointer"
+                    title="Clear chat history for this project"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Reset History
+                  </Button>
+                </>
+              )}
+            </div>
+
+            {/* Right Actions: Send */}
+            <Button
+              onClick={handleSend}
+              disabled={isLoading || !draftInput.trim()}
+              size="sm"
+              className="h-7 px-3 rounded-md cursor-pointer flex items-center gap-1"
+            >
+              <Send className="w-3.5 h-3.5 mr-0.5" />
+              <span className="text-[11px] font-medium">Send</span>
+            </Button>
+          </div>
         </div>
       </div>
     </div>
