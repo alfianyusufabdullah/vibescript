@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AgentStatus, AgentStep, Provider } from '../../shared/types';
+import type { AgentStatus, AgentStep, Provider, CodeAttachment } from '../../shared/types';
 import { AgentRuntime } from '../services/agentRuntime';
 import { useChatStore } from './chatStore';
 
@@ -9,6 +9,7 @@ interface ContextInfo {
   model: string;
   editorContext: any;
   scriptId: string;
+  attachments?: CodeAttachment[];
 }
 
 interface AgentState {
@@ -35,7 +36,7 @@ export const useAgentStore = create<AgentState>((set) => ({
   currentStepText: '',
 
   run: async (prompt: string, contextInfo: ContextInfo) => {
-    const { provider, apiKey, model, editorContext, scriptId } = contextInfo;
+    const { provider, apiKey, model, editorContext, scriptId, attachments } = contextInfo;
 
     // Cancel any existing runtime before starting a new one
     if (currentRuntime) {
@@ -75,7 +76,7 @@ export const useAgentStore = create<AgentState>((set) => ({
         set({ status: 'error', error, currentStepText: '' });
         currentRuntime = null;
       }
-    });
+    }, attachments);
   },
 
   cancel: () => {

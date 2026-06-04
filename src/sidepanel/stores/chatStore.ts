@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ChatMessage, Provider, AgentStep } from '../../shared/types';
+import type { ChatMessage, Provider, AgentStep, CodeAttachment } from '../../shared/types';
 
 interface ChatState {
   messages: ChatMessage[];
@@ -18,7 +18,7 @@ interface ChatState {
   ) => Promise<void>;
   clearHistory: (scriptId: string) => void;
   addSystemMessage: (content: string) => void;
-  addUserMessage: (scriptId: string, content: string) => void;
+  addUserMessage: (scriptId: string, content: string, attachments?: CodeAttachment[]) => void;
   addAgentResult: (scriptId: string, finalResponse: string, steps: AgentStep[]) => void;
 }
 
@@ -162,13 +162,14 @@ ${prompt}
     set(state => ({ messages: [...state.messages, msg] }));
   },
 
-  addUserMessage: (scriptId: string, content: string) => {
+  addUserMessage: (scriptId: string, content: string, attachments?: CodeAttachment[]) => {
     const { messages } = get();
     const userMsg: ChatMessage = {
       id: Math.random().toString(36).substring(7),
       role: 'user',
       content,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      attachments
     };
     const newMessages = [...messages, userMsg];
     set({ messages: newMessages });

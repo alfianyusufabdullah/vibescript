@@ -1,4 +1,4 @@
-import type { Provider, ToolDefinition, ToolCall, ToolResult, AgentMessage, AgentStep, TokenUsage } from '../../shared/types';
+import type { Provider, ToolDefinition, ToolCall, ToolResult, AgentMessage, AgentStep, TokenUsage, CodeAttachment } from '../../shared/types';
 import { AVAILABLE_TOOLS } from '../../shared/tools';
 import { AGENT_SYSTEM_PROMPT, PROVIDERS } from '../../shared/constants';
 import { useEditorStore } from '../stores/editorStore';
@@ -52,7 +52,8 @@ export class AgentRuntime {
     model: string,
     editorContext: any,
     _scriptId: string,
-    callbacks: AgentRuntimeCallbacks
+    callbacks: AgentRuntimeCallbacks,
+    attachments?: CodeAttachment[]
   ): Promise<void> {
     this.cancelled = false;
     this.totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -75,6 +76,15 @@ ${prompt}
       `.trim();
     }
 
+    if (attachments && attachments.length > 0) {
+      let attachmentText = '\n\nAttached Code Context:\n';
+      attachments.forEach((att) => {
+        const lineLabel = att.lineStart ? ` (Lines ${att.lineStart}-${att.lineEnd})` : '';
+        attachmentText += `\nFile: ${att.filename}${lineLabel}\n\`\`\`javascript\n${att.content}\n\`\`\`\n`;
+      });
+      promptWithContext += attachmentText;
+    }
+
     const messages: AgentMessage[] = [
       { role: 'system', content: AGENT_SYSTEM_PROMPT },
     ];
@@ -84,7 +94,16 @@ ${prompt}
     const recentHistory = chatHistory.slice(-6); // last 6 messages
     for (const msg of recentHistory) {
       if (msg.role === 'user') {
-        messages.push({ role: 'user', content: msg.content });
+        let msgContent = msg.content;
+        if (msg.attachments && msg.attachments.length > 0) {
+          let attachmentText = '\n\nAttached Code Context:\n';
+          msg.attachments.forEach((att) => {
+            const lineLabel = att.lineStart ? ` (Lines ${att.lineStart}-${att.lineEnd})` : '';
+            attachmentText += `\nFile: ${att.filename}${lineLabel}\n\`\`\`javascript\n${att.content}\n\`\`\`\n`;
+          });
+          msgContent += attachmentText;
+        }
+        messages.push({ role: 'user', content: msgContent });
       } else if (msg.role === 'assistant') {
         messages.push({ role: 'assistant', content: msg.content });
       }
