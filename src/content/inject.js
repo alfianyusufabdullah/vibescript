@@ -109,6 +109,16 @@
     const model = editor.getModel();
     if (!model) return;
 
+    // Guard: remove existing overlay before creating new one
+    if (_diffOverlayCleanup) {
+      _diffOverlayCleanup();
+      _diffOverlayCleanup = null;
+    }
+    const existingOverlay = document.getElementById('vibescript-diff-overlay');
+    if (existingOverlay) existingOverlay.remove();
+    const existingStyles = document.getElementById('vibescript-diff-styles');
+    if (existingStyles) existingStyles.remove();
+
     const fileName = optFilename || (model.uri ? model.uri.path.replace(/^\//, '') : 'untitled');
     const lang = optFilename ? _langFromFilename(optFilename) : model.getLanguageId();
     const container = editor.getContainerDomNode();
@@ -161,11 +171,37 @@
       '#vibescript-diff-reject:hover{background:#a71d2a}';
     document.head.appendChild(styleEl);
 
-    requestAnimationFrame(() => {
-      const origModel = monaco.editor.createModel(original, lang);
-      const modModel = monaco.editor.createModel(modified, lang);
+    // Shared state for rAF-created resources, guarded by disposed flag
+    let diffEditor = null;
+    let origModel = null;
+    let modModel = null;
+    let disposed = false;
 
-      const diffEditor = monaco.editor.createDiffEditor(diffContainer, {
+    // Synchronous cleanup — always callable, even before rAF fires
+    _diffOverlayCleanup = () => {
+      if (disposed) return;
+      disposed = true;
+      overlay.remove();
+      const s = document.getElementById('vibescript-diff-styles');
+      if (s) s.remove();
+      if (diffEditor) { try { diffEditor.dispose(); } catch (e) { console.warn('[VibeScript] diffEditor dispose error:', e); } }
+      if (origModel && !origModel.isDisposed()) { try { origModel.dispose(); } catch (e) {} }
+      if (modModel && !modModel.isDisposed()) { try { modModel.dispose(); } catch (e) {} }
+      _diffOverlayCleanup = null;
+      window.postMessage({
+        source: 'vibescript-inject',
+        action: 'DIFF_RESULT',
+        payload: { requestId, approved: false, output: 'Cancelled' }
+      }, '*');
+    };
+
+    requestAnimationFrame(() => {
+      if (disposed) return; // cancelled before rAF fired
+
+      origModel = monaco.editor.createModel(original, lang);
+      modModel = monaco.editor.createModel(modified, lang);
+
+      diffEditor = monaco.editor.createDiffEditor(diffContainer, {
         renderSideBySide: true,
         readOnly: true,
         enableSplitViewResizing: false,
@@ -199,12 +235,14 @@
       });
 
       const cleanup = () => {
-        diffEditor.dispose();
-        origModel.dispose();
-        modModel.dispose();
+        if (disposed) return;
+        disposed = true;
         overlay.remove();
         const s = document.getElementById('vibescript-diff-styles');
         if (s) s.remove();
+        if (diffEditor) { try { diffEditor.dispose(); } catch (e) { console.warn('[VibeScript] diffEditor dispose error:', e); } }
+        if (origModel && !origModel.isDisposed()) { try { origModel.dispose(); } catch (e) {} }
+        if (modModel && !modModel.isDisposed()) { try { modModel.dispose(); } catch (e) {} }
         _diffOverlayCleanup = null;
       };
 
@@ -222,26 +260,26 @@
         if (onApprove) {
           approveBtn.disabled = true;
           approveBtn.textContent = 'Creating...';
-          const ok = await onApprove();
-          if (ok) {
-            finish(true);
-          } else {
-            // onApprove already sent a failure DIFF_RESULT; just cleanup overlay
-            cleanup();
+          try {
+            const ok = await onApprove();
+            if (ok) {
+              finish(true);
+            } else {
+              finish(false);
+            }
+          } catch (e) {
+            console.error('[VibeScript] onApprove error:', e);
+            finish(false);
           }
         } else {
-          editor.executeEdits('vibescript', [{ range, text: replaceText, forceMoveMarkers: true }]);
-          finish(true);
+          try {
+            editor.executeEdits('vibescript', [{ range, text: replaceText, forceMoveMarkers: true }]);
+            finish(true);
+          } catch (e) {
+            console.error('[VibeScript] executeEdits error:', e);
+            finish(false);
+          }
         }
-      };
-
-      _diffOverlayCleanup = () => {
-        cleanup();
-        window.postMessage({
-          source: 'vibescript-inject',
-          action: 'DIFF_RESULT',
-          payload: { requestId, approved: false, output: 'Cancelled' }
-        }, '*');
       };
     });
   }
@@ -271,11 +309,15 @@
         const model = editor.getModel();
         if (!model) return;
 
-        editor.executeEdits('vibescript', [{
-          range: model.getFullModelRange(),
-          text: event.data.payload.code,
-          forceMoveMarkers: true
-        }]);
+        try {
+          editor.executeEdits('vibescript', [{
+            range: model.getFullModelRange(),
+            text: event.data.payload.code,
+            forceMoveMarkers: true
+          }]);
+        } catch (e) {
+          console.error('[VibeScript] SET_CODE executeEdits error:', e);
+        }
         break;
       }
 
@@ -284,16 +326,20 @@
         const position = editor.getPosition();
         if (!position) return;
 
-        editor.executeEdits('vibescript', [{
-          range: new monaco.Range(
-            position.lineNumber,
-            position.column,
-            position.lineNumber,
-            position.column
-          ),
-          text: event.data.payload.code,
-          forceMoveMarkers: true
-        }]);
+        try {
+          editor.executeEdits('vibescript', [{
+            range: new monaco.Range(
+              position.lineNumber,
+              position.column,
+              position.lineNumber,
+              position.column
+            ),
+            text: event.data.payload.code,
+            forceMoveMarkers: true
+          }]);
+        } catch (e) {
+          console.error('[VibeScript] INSERT_AT_CURSOR executeEdits error:', e);
+        }
         break;
       }
 
@@ -302,11 +348,15 @@
         const selection = editor.getSelection();
         if (!selection) return;
 
-        editor.executeEdits('vibescript', [{
-          range: selection,
-          text: event.data.payload.code,
-          forceMoveMarkers: true
-        }]);
+        try {
+          editor.executeEdits('vibescript', [{
+            range: selection,
+            text: event.data.payload.code,
+            forceMoveMarkers: true
+          }]);
+        } catch (e) {
+          console.error('[VibeScript] REPLACE_SELECTION executeEdits error:', e);
+        }
         break;
       }
 
@@ -491,11 +541,15 @@
           if (fullText.includes(search)) {
             const newText = fullText.replace(search, replace);
             if (newText !== fullText) {
-              editor.executeEdits('vibescript', [{
-                range: model.getFullModelRange(),
-                text: newText,
-                forceMoveMarkers: true
-              }]);
+              try {
+                editor.executeEdits('vibescript', [{
+                  range: model.getFullModelRange(),
+                  text: newText,
+                  forceMoveMarkers: true
+                }]);
+              } catch (e) {
+                console.error('[VibeScript] EDIT_FILE fallback executeEdits error:', e);
+              }
               window.postMessage({
                 source: 'vibescript-inject',
                 action: 'EDIT_FILE_RESULT',
@@ -520,11 +574,15 @@
             }
           }, '*');
         } else {
-          editor.executeEdits('vibescript', [{
-            range: matches[0].range,
-            text: replace,
-            forceMoveMarkers: true
-          }]);
+          try {
+            editor.executeEdits('vibescript', [{
+              range: matches[0].range,
+              text: replace,
+              forceMoveMarkers: true
+            }]);
+          } catch (e) {
+            console.error('[VibeScript] EDIT_FILE single executeEdits error:', e);
+          }
           window.postMessage({
             source: 'vibescript-inject',
             action: 'EDIT_FILE_RESULT',
@@ -830,11 +888,17 @@
       hookEditor(editor);
     });
 
-    // Defensive polling check for newly loaded/replaced editor instances
-    setInterval(() => {
+    // One-shot poll for newly loaded/replaced editor instances (stop after 30 attempts)
+    let pollCount = 0;
+    const pollId = setInterval(() => {
+      pollCount++;
       const currentMonaco = getMonaco();
       if (currentMonaco && currentMonaco.editor) {
         currentMonaco.editor.getEditors().forEach(hookEditor);
+      }
+      if (pollCount >= 30) {
+        clearInterval(pollId);
+        console.warn('[VibeScript] Editor polling stopped after 30 attempts');
       }
     }, 2000);
 
@@ -855,8 +919,9 @@
     });
   }
 
-  // Poll for Monaco availability
+  // Poll for Monaco availability (max 60 attempts, ~60 seconds)
   let pollAttempts = 0;
+  const MONACO_POLL_MAX = 60;
   const interval = setInterval(() => {
     try {
       pollAttempts++;
@@ -876,6 +941,9 @@
           source: 'vibescript-inject',
           action: 'MONACO_READY'
         }, '*');
+      } else if (pollAttempts >= MONACO_POLL_MAX) {
+        clearInterval(interval);
+        logDiagnostics('Monaco polling stopped after ' + pollAttempts + ' attempts — Monaco not found', 'warn');
       }
     } catch (err) {
       logDiagnostics('Error in polling loop: ' + err.message + '\n' + err.stack, 'error');
