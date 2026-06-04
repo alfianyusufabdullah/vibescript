@@ -1,5 +1,17 @@
 export type Provider = 'gemini' | 'openai' | 'anthropic' | 'deepseek';
 
+export type FinishReason = 'stop' | 'tool_calls' | 'length' | 'error';
+
+export type ProviderEvent =
+  | { type: 'text_delta'; delta: string }
+  | { type: 'reasoning_delta'; delta: string }
+  | { type: 'tool_call_start'; index: number; id: string; name: string }
+  | { type: 'tool_call_delta'; index: number; delta: string }
+  | { type: 'tool_call_stop'; index: number }
+  | { type: 'usage'; usage: TokenUsage }
+  | { type: 'done'; finishReason: FinishReason; text: string; toolCalls: ToolCall[]; usage?: TokenUsage }
+  | { type: 'error'; error: string; retriable: boolean };
+
 export interface CodeAttachment {
   filename: string;
   lineStart?: number;
@@ -77,6 +89,26 @@ export interface ToolDefinition {
   parameters: Record<string, unknown>;
 }
 
+export interface Tool {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  execute(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
+}
+
+export interface ToolContext {
+  editorStore: {
+    fetchContext: () => Promise<MonacoEditorContext | null>;
+    editFile: (search: string, replace: string) => Promise<{ success: boolean; matchCount: number; error?: string }>;
+    editFileWithReview: (search: string, replace: string) => Promise<{ approved: boolean; output: string }>;
+    listOpenFiles: () => Promise<Array<{ name: string; language: string; isActive: boolean }>>;
+    readFileByName: (filename: string) => Promise<MonacoEditorContext | null>;
+    cancelDiffReview: () => void;
+  };
+  cancelDiffReview: () => void;
+  signalStop: () => void;
+}
+
 export interface ToolCall {
   id: string;
   name: string;
@@ -100,13 +132,35 @@ export interface TokenUsage {
 export interface LLMResponse {
   text: string;
   toolCalls: ToolCall[];
-  finishReason: 'stop' | 'tool_calls' | 'length' | 'error';
+  finishReason: FinishReason;
   usage?: TokenUsage;
 }
 
 // ─── Agent Types ───────────────────────────────────────────────────────────
 
+export interface AgentRole {
+  id: string;
+  label: string;
+  description: string;
+  systemPrompt: string;
+  allowedTools: '*' | string[];
+  color: string;
+}
+
 export type AgentStatus = 'idle' | 'thinking' | 'executing_tools' | 'done' | 'error' | 'cancelled';
+
+export interface AgentSession {
+  id: string;
+  scriptId: string;
+  label: string;
+  status: 'active' | 'paused' | 'completed' | 'error';
+  agentRole: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: ChatMessage[];
+  steps: AgentStep[];
+  tokenUsage: TokenUsage;
+}
 
 export interface AgentStep {
   type: 'text' | 'tool_call' | 'tool_result';
