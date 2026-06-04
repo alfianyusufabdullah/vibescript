@@ -70,6 +70,7 @@ export interface ExtensionMessage {
 
 export interface MonacoEditorContext {
   code: string;
+  filename?: string;
   language: string;
   position: { line: number; col: number } | null;
   selection: {
