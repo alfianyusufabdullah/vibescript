@@ -17,6 +17,7 @@ interface AgentState {
   finalResponse: string | null;
   error: string | null;
   streamingText: string;
+  currentStepText: string;
 
   run: (prompt: string, contextInfo: ContextInfo) => Promise<void>;
   cancel: () => void;
@@ -31,6 +32,7 @@ export const useAgentStore = create<AgentState>((set) => ({
   finalResponse: null,
   error: null,
   streamingText: '',
+  currentStepText: '',
 
   run: async (prompt: string, contextInfo: ContextInfo) => {
     const { provider, apiKey, model, editorContext, scriptId } = contextInfo;
@@ -41,18 +43,22 @@ export const useAgentStore = create<AgentState>((set) => ({
       currentRuntime = null;
     }
 
-    set({ status: 'thinking', steps: [], finalResponse: null, error: null, streamingText: '' });
+    set({ status: 'thinking', steps: [], finalResponse: null, error: null, streamingText: '', currentStepText: '' });
 
     const runtime = new AgentRuntime();
     currentRuntime = runtime;
 
     await runtime.run(prompt, provider, apiKey, model, editorContext, scriptId, {
       onStreamingText: (text: string) => {
-        set((state) => ({ streamingText: state.streamingText + text }));
+        set((state) => ({
+          streamingText: state.streamingText + text,
+          currentStepText: state.currentStepText + text
+        }));
       },
       onStep: (step: AgentStep) => {
         set((state) => ({
           steps: [...state.steps, step],
+          currentStepText: '',
           status: step.type === 'tool_call' ? 'executing_tools' as AgentStatus : 'thinking' as AgentStatus
         }));
       },
@@ -61,12 +67,12 @@ export const useAgentStore = create<AgentState>((set) => ({
         // Use accumulated streaming text (full conversation) when available,
         // fall back to final response (e.g. when finish tool provides summary)
         const content = state.streamingText || response;
-        set({ status: 'done', finalResponse: response });
+        set({ status: 'done', finalResponse: response, currentStepText: '' });
         useChatStore.getState().addAgentResult(scriptId, content, state.steps);
         currentRuntime = null;
       },
       onError: (error: string) => {
-        set({ status: 'error', error });
+        set({ status: 'error', error, currentStepText: '' });
         currentRuntime = null;
       }
     });
@@ -77,11 +83,11 @@ export const useAgentStore = create<AgentState>((set) => ({
       currentRuntime.cancel();
       currentRuntime = null;
     }
-    set({ status: 'cancelled' });
+    set({ status: 'cancelled', currentStepText: '' });
   },
 
   reset: () => {
     currentRuntime = null;
-    set({ status: 'idle', steps: [], finalResponse: null, error: null, streamingText: '' });
+    set({ status: 'idle', steps: [], finalResponse: null, error: null, streamingText: '', currentStepText: '' });
   }
 }));

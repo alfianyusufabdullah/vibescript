@@ -147,8 +147,13 @@ ${prompt}
       };
       messages.push(assistantMsg);
 
-      // No tool calls → done (final text goes to onDone, not as a step)
+      // No tool calls → done
       if (!toolCalls || toolCalls.length === 0) {
+        callbacks.onStep({
+          type: 'text',
+          content: text,
+          timestamp: Date.now()
+        });
         callbacks.onDone(text);
         return;
       }
@@ -156,8 +161,17 @@ ${prompt}
       // Check for finish tool
       const finishCall = toolCalls.find(tc => tc.name === 'finish');
       if (finishCall) {
-        const summary = (finishCall.arguments?.summary as string) || text;
-        callbacks.onDone(summary);
+        const summary = (finishCall.arguments?.summary as string) || '';
+        const finalContent = text
+          ? (summary && summary !== text ? `${text}\n\n**Summary:** ${summary}` : text)
+          : summary || 'Task finished';
+
+        callbacks.onStep({
+          type: 'text',
+          content: finalContent,
+          timestamp: Date.now()
+        });
+        callbacks.onDone(summary || text);
         return;
       }
 
@@ -189,6 +203,11 @@ ${prompt}
       // Check if user rejected the edit
       const rejected = toolResults.some(r => r.error === 'USER_REJECTED');
       if (rejected) {
+        callbacks.onStep({
+          type: 'text',
+          content: 'Changes rejected. Agent stopped.',
+          timestamp: Date.now()
+        });
         callbacks.onDone('Changes rejected. Agent stopped.');
         return;
       }
