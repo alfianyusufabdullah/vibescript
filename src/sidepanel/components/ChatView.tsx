@@ -68,42 +68,57 @@ export const ChatView: React.FC = () => {
 
   const handleNewSession = useCallback(async () => {
     const sid = scriptId || 'global';
-    // save current session messages and deactivate it
-    const currentId = sessionManager.getCurrentSessionId();
-    if (currentId) {
-      const sess = await sessionManager.loadSession(sid, currentId);
-      if (sess) {
-        sess.status = 'paused';
-        await sessionManager.updateSessionMessages(sess, messages, [], { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+    // save current session messages
+    try {
+      const currentId = sessionManager.getCurrentSessionId();
+      if (currentId) {
+        const sess = await sessionManager.loadSession(sid, currentId);
+        if (sess) {
+          sess.status = 'paused';
+          await sessionManager.updateSessionMessages(sess, messages, [], { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+        }
       }
+    } catch (err) {
+      console.error('[VibeScript] Failed to save current session:', err);
     }
     // clear chat and create new session
     useChatStore.getState().setMessages([]);
-    const newSess = await sessionManager.startNewSession(sid, 'build');
-    sessionManager.setCurrentSession(newSess.id);
-    await sessionManager.deactivateOtherSessions(sid, newSess.id);
+    try {
+      const newSess = await sessionManager.startNewSession(sid, 'build');
+      sessionManager.setCurrentSession(newSess.id);
+      await sessionManager.deactivateOtherSessions(sid, newSess.id);
+    } catch (err) {
+      console.error('[VibeScript] Failed to create new session:', err);
+    }
     await loadSessions();
   }, [scriptId, messages, loadSessions]);
 
   const handleSwitchSession = useCallback(async (sess: AgentSession) => {
     const sid = scriptId || 'global';
     // save current session as paused
-    const currentId = sessionManager.getCurrentSessionId();
-    if (currentId && currentId !== sess.id) {
-      const currentSess = await sessionManager.loadSession(sid, currentId);
-      if (currentSess) {
-        currentSess.status = 'paused';
-        await sessionManager.updateSessionMessages(currentSess, messages, [], { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+    try {
+      const currentId = sessionManager.getCurrentSessionId();
+      if (currentId && currentId !== sess.id) {
+        const currentSess = await sessionManager.loadSession(sid, currentId);
+        if (currentSess) {
+          currentSess.status = 'paused';
+          await sessionManager.updateSessionMessages(currentSess, messages, [], { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+        }
       }
+    } catch (err) {
+      console.error('[VibeScript] Failed to pause current session:', err);
     }
-    // deactivate all other sessions, activate selected
-    await sessionManager.deactivateOtherSessions(sid, sess.id);
     // load selected session
-    const loaded = await sessionManager.loadSession(sid, sess.id);
-    if (loaded) {
-      loaded.status = 'active';
-      await sessionManager.saveSession(loaded);
-      useChatStore.getState().setMessages(loaded.messages || []);
+    try {
+      await sessionManager.deactivateOtherSessions(sid, sess.id);
+      const loaded = await sessionManager.loadSession(sid, sess.id);
+      if (loaded) {
+        loaded.status = 'active';
+        await sessionManager.saveSession(loaded);
+        useChatStore.getState().setMessages(loaded.messages || []);
+      }
+    } catch (err) {
+      console.error('[VibeScript] Failed to switch session:', err);
     }
     await loadSessions();
   }, [scriptId, messages, loadSessions]);

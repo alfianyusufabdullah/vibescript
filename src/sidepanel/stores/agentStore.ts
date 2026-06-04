@@ -70,22 +70,25 @@ export const useAgentStore = create<AgentState>((set) => ({
       reasoningText: '',
     });
 
-    // Reuse existing session for this conversation; create one only on first message
-    const scriptLabel = editorContext?.scriptId || 'global';
-    const existingSessions = await sessionManager.listSessions(scriptLabel);
-    const currentSessionId = sessionManager.getCurrentSessionId();
-    const currentSession = currentSessionId
-      ? await sessionManager.loadSession(scriptLabel, currentSessionId)
-      : null;
-    if (!currentSession) {
-      if (existingSessions.length === 0) {
-        await sessionManager.createSession(scriptLabel, `Conversation`, role.id);
-      } else {
-        // reuse the most recent session
-        const latest = existingSessions.sort((a, b) => b.updatedAt - a.updatedAt)[0];
-        await sessionManager.loadSession(scriptLabel, latest.id);
-        await sessionManager.deactivateOtherSessions(scriptLabel, latest.id);
+    // Try to set up session; errors must not prevent the agent from running
+    try {
+      const scriptLabel = editorContext?.scriptId || 'global';
+      const existingSessions = await sessionManager.listSessions(scriptLabel);
+      const currentSessionId = sessionManager.getCurrentSessionId();
+      const currentSession = currentSessionId
+        ? await sessionManager.loadSession(scriptLabel, currentSessionId)
+        : null;
+      if (!currentSession) {
+        if (existingSessions.length === 0) {
+          await sessionManager.createSession(scriptLabel, `Conversation`, role.id);
+        } else {
+          const latest = existingSessions.sort((a, b) => b.updatedAt - a.updatedAt)[0];
+          await sessionManager.loadSession(scriptLabel, latest.id);
+          await sessionManager.deactivateOtherSessions(scriptLabel, latest.id);
+        }
       }
+    } catch (err) {
+      console.error('[VibeScript] Session setup failed (agent will still run):', err);
     }
 
     await agentOrchestrator.runAgent(
@@ -119,21 +122,25 @@ export const useAgentStore = create<AgentState>((set) => ({
           const state = useAgentStore.getState();
           const content = state.streamingText || response;
 
-          // Save session state (keep active — conversation continues)
-          const sid = useEditorStore.getState().scriptId || 'global';
-          const sessId = sessionManager.getCurrentSessionId();
-          if (sessId) {
-            const sess = await sessionManager.loadSession(sid, sessId);
-            if (sess) {
-              const chatMessages = useChatStore.getState().messages;
-              sess.status = 'active';
-              await sessionManager.deactivateOtherSessions(sid, sess.id);
-              await sessionManager.updateSessionMessages(sess, chatMessages, state.steps, {
-                promptTokens: 0,
-                completionTokens: 0,
-                totalTokens: 0,
-              });
+          // Save session — errors must not break the UI
+          try {
+            const sid = useEditorStore.getState().scriptId || 'global';
+            const sessId = sessionManager.getCurrentSessionId();
+            if (sessId) {
+              const sess = await sessionManager.loadSession(sid, sessId);
+              if (sess) {
+                const chatMessages = useChatStore.getState().messages;
+                sess.status = 'active';
+                await sessionManager.deactivateOtherSessions(sid, sess.id);
+                await sessionManager.updateSessionMessages(sess, chatMessages, state.steps, {
+                  promptTokens: 0,
+                  completionTokens: 0,
+                  totalTokens: 0,
+                });
+              }
             }
+          } catch (err) {
+            console.error('[VibeScript] Failed to save session on done:', err);
           }
 
           set({ status: 'done', finalResponse: response, currentStepText: '', currentRole: null });
