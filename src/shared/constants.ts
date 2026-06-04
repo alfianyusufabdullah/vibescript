@@ -47,6 +47,7 @@ export interface ProviderConfig {
   models: ModelInfo[];
   defaultModel: string;
   contextWindow: number;
+  baseUrl?: string;
 }
 
 export const PROVIDERS: Record<Provider, ProviderConfig> = {
