@@ -1,7 +1,7 @@
 import { create } from 'zustand';
-import type { MonacoEditorContext } from '../../shared/types';
+import type { MonacoEditorContext, CodeAttachment } from '../../shared/types';
 
-interface FileInfo {
+export interface FileInfo {
   name: string;
   language: string;
   isActive: boolean;
@@ -22,6 +22,7 @@ interface EditorState {
   currentContext: MonacoEditorContext | null;
   scriptId: string | null;
   isActiveTabAppsScript: boolean;
+  draftAttachments: CodeAttachment[];
   
   detectActiveTab: () => Promise<void>;
   fetchContext: () => Promise<MonacoEditorContext | null>;
@@ -34,12 +35,16 @@ interface EditorState {
   editFileWithReview: (search: string, replace: string) => Promise<EditFileReviewResult>;
 
   cancelDiffReview: () => void;
+  addAttachment: (attachment: CodeAttachment) => void;
+  removeAttachment: (index: number) => void;
+  clearAttachments: () => void;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
   currentContext: null,
   scriptId: null,
   isActiveTabAppsScript: false,
+  draftAttachments: [],
 
   detectActiveTab: async () => {
     if (typeof window === 'undefined') {
@@ -123,6 +128,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   listOpenFiles: async () => {
+    if (!get().isActiveTabAppsScript) {
+      return [
+        { name: 'Code.gs', language: 'javascript', isActive: true },
+        { name: 'Ui.html', language: 'html', isActive: false },
+        { name: 'Helpers.gs', language: 'javascript', isActive: false },
+      ];
+    }
+
     const requestId = Math.random().toString(36).substring(7);
 
     return new Promise<FileInfo[]>((resolve) => {
@@ -152,6 +165,40 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   readFileByName: async (filename: string) => {
+    if (!get().isActiveTabAppsScript) {
+      if (filename === 'Code.gs') {
+        return {
+          code: `function doGet() {\n  return HtmlService.createHtmlOutputFromFile('Ui');\n}\n\nfunction getSpreadsheetData() {\n  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();\n  return sheet.getDataRange().getValues();\n}`,
+          filename: 'Code.gs',
+          language: 'javascript',
+          position: null,
+          selection: null,
+          selectedText: ''
+        };
+      }
+      if (filename === 'Ui.html') {
+        return {
+          code: `<!DOCTYPE html>\n<html>\n  <head>\n    <base target="_top">\n  </head>\n  <body>\n    <h1>Hello VibeScript</h1>\n    <script>\n      console.log('App loaded');\n    </script>\n  </body>\n</html>`,
+          filename: 'Ui.html',
+          language: 'html',
+          position: null,
+          selection: null,
+          selectedText: ''
+        };
+      }
+      if (filename === 'Helpers.gs') {
+        return {
+          code: `function formatName(name) {\n  return name ? name.toUpperCase() : 'ANONYMOUS';\n}\n\nfunction logAction(action) {\n  Logger.log('Action performed: ' + action);\n}`,
+          filename: 'Helpers.gs',
+          language: 'javascript',
+          position: null,
+          selection: null,
+          selectedText: ''
+        };
+      }
+      return null;
+    }
+
     const requestId = Math.random().toString(36).substring(7);
 
     return new Promise<MonacoEditorContext | null>((resolve) => {
@@ -249,5 +296,28 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       action: 'EDIT_FILE_REVIEW_CANCEL',
       payload: {}
     }, '*');
+  },
+
+  addAttachment: (attachment: CodeAttachment) => {
+    const existing = get().draftAttachments;
+    const isDuplicate = existing.some(
+      (a) =>
+        a.filename === attachment.filename &&
+        a.lineStart === attachment.lineStart &&
+        a.lineEnd === attachment.lineEnd &&
+        a.content === attachment.content
+    );
+    if (!isDuplicate) {
+      set({ draftAttachments: [...existing, attachment] });
+    }
+  },
+
+  removeAttachment: (index: number) => {
+    const existing = get().draftAttachments;
+    set({ draftAttachments: existing.filter((_, i) => i !== index) });
+  },
+
+  clearAttachments: () => {
+    set({ draftAttachments: [] });
   }
 }));

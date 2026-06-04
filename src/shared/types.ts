@@ -1,11 +1,19 @@
 export type Provider = 'gemini' | 'openai' | 'anthropic' | 'deepseek';
 
+export interface CodeAttachment {
+  filename: string;
+  lineStart?: number;
+  lineEnd?: number;
+  content: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
   agentSteps?: AgentStep[];
+  attachments?: CodeAttachment[];
 }
 
 export interface Settings {
@@ -32,7 +40,15 @@ export type MessageAction =
   | 'FILE_CHANGED'
   | 'EDIT_FILE_REVIEW'
   | 'EDIT_FILE_REVIEW_CANCEL'
-  | 'DIFF_RESULT';
+  | 'DIFF_RESULT'
+  | 'ATTACH_SELECTION'
+  | 'LIST_FILES'
+  | 'LIST_FILES_RESULT'
+  | 'MONACO_READY'
+  | 'INJECT_BRIDGE'
+  | 'EDIT_FILE'
+  | 'EDIT_FILE_RESULT'
+  | 'READ_FILE_BY_NAME';
 
 export interface ExtensionMessage {
   source: 'vibescript-sidepanel' | 'vibescript-background' | 'vibescript-content' | 'vibescript-inject';

@@ -13,6 +13,7 @@ interface UiState {
   setDraftInput: (input: string) => void;
   setPanelWidth: (width: number) => void;
   loadUiState: () => Promise<void>;
+  insertMention: (filename: string, lineStart?: number, lineEnd?: number) => void;
 }
 
 interface SavedUiState {
@@ -51,6 +52,19 @@ export const useUiStore = create<UiState>((set, get) => ({
 
   setPanelWidth: (width) => {
     set({ panelWidth: width });
+    saveUiState(get());
+  },
+
+  insertMention: (filename, lineStart, lineEnd) => {
+    const { draftInput } = get();
+    const mention = lineStart !== undefined && lineEnd !== undefined
+      ? `@${filename}:${lineStart}-${lineEnd}`
+      : lineStart !== undefined
+      ? `@${filename}:${lineStart}`
+      : `@${filename}`;
+    const space = draftInput && !draftInput.endsWith(' ') ? ' ' : '';
+    const newText = draftInput + space + mention + ' ';
+    set({ draftInput: newText });
     saveUiState(get());
   },
 
