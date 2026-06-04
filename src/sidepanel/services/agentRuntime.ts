@@ -11,7 +11,6 @@ import { eventBus } from '../../shared/eventBus';
 
 const MAX_STEPS = 25;
 const TOOL_TIMEOUT = 10_000;
-const DIFF_REVIEW_TIMEOUT = 300_000;
 const CONTEXT_WARN_RATIO = 0.7;
 const CONTEXT_CRITICAL_RATIO = 0.85;
 const MAX_RETRIES = 3;
@@ -474,19 +473,23 @@ ${prompt}
   }
 
   private async executeToolWithTimeout(tc: ToolCall): Promise<ToolResult> {
-    const timeout = tc.name === 'edit_file' ? DIFF_REVIEW_TIMEOUT : TOOL_TIMEOUT;
-    const timeoutPromise = new Promise<ToolResult>((_, reject) =>
-      setTimeout(() => reject(new Error('Tool execution timed out')), timeout)
-    );
+    const timeout = tc.name === 'edit_file' ? undefined : TOOL_TIMEOUT;
+
+    const exec = toolRegistry.execute(tc.name, tc.arguments, this.toolContext());
+
+    const raced = timeout !== undefined
+      ? Promise.race([
+          exec,
+          new Promise<ToolResult>((_, reject) =>
+            setTimeout(() => reject(new Error('Tool execution timed out')), timeout)
+          ),
+        ])
+      : exec;
 
     try {
       eventBus.emit('tool:start', { name: tc.name, args: tc.arguments });
       const startTime = Date.now();
-      const ctx = this.toolContext();
-      const result = await Promise.race([
-        toolRegistry.execute(tc.name, tc.arguments, ctx),
-        timeoutPromise,
-      ]);
+      const result = await raced;
       const duration = Date.now() - startTime;
       eventBus.emit('tool:result', {
         name: tc.name,
@@ -509,7 +512,7 @@ ${prompt}
         success: false,
         output: '',
         error: result.error,
-        duration: timeout,
+        duration: timeout ?? 0,
       });
       return result;
     }
