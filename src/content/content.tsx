@@ -2,21 +2,20 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from '../sidepanel/App';
 import { useUiStore } from '../sidepanel/stores/uiStore';
+import { useEditorStore } from '../sidepanel/stores/editorStore';
+import { useDiagnosticsStore } from '../sidepanel/stores/diagnosticsStore';
 import type { ExtensionMessage } from '../shared/types';
 import cssText from '../index.css?inline';
 
-// 1. Inject page-context script (inject.js) to access window.monaco
-try {
-  const script = document.createElement('script');
-  script.src = chrome.runtime.getURL('src/content/inject.js');
-  script.onload = () => {
-    script.remove();
-  };
-  (document.head || document.documentElement).appendChild(script);
-  console.log('[VibeScript] Content script injected bridge successfully');
-} catch (err) {
-  console.error('[VibeScript] Failed to inject bridge script:', err);
-}
+// Log content script load
+useDiagnosticsStore.getState().addLog('[Content] Content script loaded. top=' + (window === window.top) + ' url=' + window.location.href);
+
+// 1. Request background to inject the page-context bridge script (inject.js) via scripting API to bypass CSP
+useDiagnosticsStore.getState().addLog('[Content] Requesting background to run INJECT_BRIDGE');
+chrome.runtime.sendMessage({
+  source: 'vibescript-content',
+  action: 'INJECT_BRIDGE'
+});
 
 // 2. Load Google Fonts (Outfit) and Global Offcanvas Styles in main document head
 const linkId = 'vibescript-google-fonts';
@@ -68,7 +67,7 @@ document.body.classList.add('vibescript-no-transition');
 const rootId = 'vibescript-root';
 let host = document.getElementById(rootId);
 
-if (!host) {
+if (!host && window === window.top) {
   host = document.createElement('div');
   host.id = rootId;
   document.body.appendChild(host);
@@ -92,38 +91,125 @@ if (!host) {
   );
 }
 
-// 4. Message Listener for Extension background toggles
+// 4. Message Listener for Extension background toggles and cross-frame messages
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
+  useDiagnosticsStore.getState().addLog('[Content] Received runtime message: ' + message.action);
+
   if (message.action === 'SIDE_PANEL_OPENED') {
-    useUiStore.getState().togglePanel();
+    if (window === window.top) {
+      useUiStore.getState().togglePanel();
+    }
     sendResponse({ success: true });
+    return false;
   }
+
+  // If we are in the main frame (frameId: 0), forward editor-produced values to the React UI or stores
+  if (window === window.top) {
+    if (message.action === 'ATTACH_SELECTION') {
+      useDiagnosticsStore.getState().addLog('[Content] Forwarding ATTACH_SELECTION content to editor store', 'success');
+      useEditorStore.getState().addAttachment({
+        filename: message.payload.filename,
+        content: message.payload.content || message.payload.text || '',
+        lineStart: message.payload.startLine,
+        lineEnd: message.payload.endLine
+      });
+      useUiStore.getState().insertMention(
+        message.payload.filename,
+        message.payload.startLine,
+        message.payload.endLine
+      );
+      useUiStore.getState().setPanelOpen(true);
+    } else if (
+      message.action === 'CODE_RESULT' ||
+      message.action === 'DIFF_RESULT' ||
+      message.action === 'LIST_FILES_RESULT' ||
+      message.action === 'EDIT_FILE_RESULT'
+    ) {
+      window.postMessage({
+        ...message,
+        source: 'vibescript-inject',
+        fromContentScript: true
+      }, '*');
+    }
+  }
+  // If we are in the Monaco editor frame (nested iframe), forward editor commands down to the page context inject.js
+  else {
+    if (
+      message.action === 'GET_CODE' ||
+      message.action === 'SET_CODE' ||
+      message.action === 'INSERT_AT_CURSOR' ||
+      message.action === 'REPLACE_SELECTION' ||
+      message.action === 'LIST_FILES' ||
+      message.action === 'READ_FILE_BY_NAME' ||
+      message.action === 'EDIT_FILE_REVIEW' ||
+      message.action === 'EDIT_FILE_REVIEW_CANCEL' ||
+      message.action === 'EDIT_FILE'
+    ) {
+      window.postMessage(message, '*');
+    }
+  }
+
   return false;
 });
 
-// 5. Message Listener for Monaco editor completions
+// 5. Message Listener for Monaco page-context (inject.js) communication
 window.addEventListener('message', (event) => {
-  if (event.data?.source !== 'vibescript-inject') return;
+  const data = event.data;
+  if (!data || typeof data !== 'object') return;
 
-  const { action, payload } = event.data;
+  // Handles messages coming from the page-context (inject.js)
+  if (data.source === 'vibescript-inject' && !data.fromContentScript) {
+    const { action, payload } = data;
 
-  // If the injected script requests an inline completion from the LLM
-  if (action === 'REQUEST_COMPLETION') {
-    // Send to background service worker
-    chrome.runtime.sendMessage({
-      source: 'vibescript-content',
-      action: 'REQUEST_COMPLETION',
-      payload
-    }, (response) => {
-      // Forward the completion result back to the page context
-      window.postMessage({
+    if (action === 'DIAGNOSTICS_LOG') {
+      useDiagnosticsStore.getState().addLog(`[Inject] ${payload.message}`, payload.type);
+      return;
+    }
+
+    useDiagnosticsStore.getState().addLog(`[Content] Received from inject: ${action}`);
+
+    if (action === 'REQUEST_COMPLETION') {
+      chrome.runtime.sendMessage({
         source: 'vibescript-content',
-        action: 'COMPLETION_RESULT',
-        payload: {
-          requestId: payload.requestId,
-          suggestion: response?.suggestion || ''
-        }
-      }, '*');
-    });
+        action: 'REQUEST_COMPLETION',
+        payload
+      }, (response) => {
+        window.postMessage({
+          source: 'vibescript-content',
+          action: 'COMPLETION_RESULT',
+          payload: {
+            requestId: payload.requestId,
+            suggestion: response?.suggestion || ''
+          }
+        }, '*');
+      });
+    } else {
+      // Forward Monaco events/results (MONACO_READY, ATTACH_SELECTION, CODE_RESULT, etc.) up to background
+      chrome.runtime.sendMessage({
+        source: 'vibescript-content',
+        action,
+        payload
+      });
+    }
+  }
+
+  // Intercept messages from the React app sidepanel and forward to the background script
+  // so they can be routed to the correct editor frame.
+  const sidepanelRequests = [
+    'GET_CODE',
+    'SET_CODE',
+    'INSERT_AT_CURSOR',
+    'REPLACE_SELECTION',
+    'LIST_FILES',
+    'READ_FILE_BY_NAME',
+    'EDIT_FILE_REVIEW',
+    'EDIT_FILE_REVIEW_CANCEL',
+    'EDIT_FILE'
+  ];
+  if (data.source === 'vibescript-content' && window === window.top) {
+    if (sidepanelRequests.includes(data.action)) {
+      useDiagnosticsStore.getState().addLog('[Content] Forwarding sidepanel message to background: ' + data.action);
+      chrome.runtime.sendMessage(data);
+    }
   }
 });

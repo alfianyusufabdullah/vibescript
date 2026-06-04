@@ -1,5 +1,26 @@
 (function () {
-  const getMonaco = () => window.monaco;
+  if (window.__vibescript_injected__) return;
+  window.__vibescript_injected__ = true;
+
+  function logDiagnostics(message, type = 'info') {
+    console.log('[VibeScript Inject] ' + message);
+    window.postMessage({
+      source: 'vibescript-inject',
+      action: 'DIAGNOSTICS_LOG',
+      payload: { message, type }
+    }, '*');
+    // Also post to local log server
+    fetch('http://127.0.0.1:9999/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, type })
+    }).catch(() => {});
+  }
+
+  try {
+    logDiagnostics('inject.js loaded in context: ' + window.location.href);
+
+    const getMonaco = () => window.monaco;
 
   function getActiveEditor() {
     const monaco = getMonaco();
@@ -255,15 +276,57 @@
       }
 
       case 'LIST_FILES': {
-        const editorsList = monaco.editor.getEditors();
-        const files = editorsList.map((e) => {
-          const model = e.getModel();
-          return {
-            name: model ? model.uri.path.replace(/^\//, '') : 'untitled',
-            language: model ? model.getLanguageId() : 'unknown',
-            isActive: e.hasWidgetFocus()
-          };
+        const monaco = getMonaco();
+        if (!monaco || !monaco.editor) {
+          window.postMessage({
+            source: 'vibescript-inject',
+            action: 'LIST_FILES_RESULT',
+            payload: { requestId: event.data.payload?.requestId, files: [] }
+          }, '*');
+          break;
+        }
+
+        // Diagnostic log: check DOM treeitems
+        try {
+          const treeitems = Array.from(document.querySelectorAll('[role="treeitem"]'));
+          logDiagnostics(`Found ${treeitems.length} treeitems:`);
+          treeitems.forEach((item, idx) => {
+            logDiagnostics(`  [Treeitem ${idx}] text: "${item.textContent?.trim()}", class: "${item.className}", innerHTML: "${item.innerHTML.substring(0, 100)}"`);
+          });
+        } catch (e) {
+          logDiagnostics(`Error listing treeitems: ${e.message}`, 'error');
+        }
+
+        // Diagnostic log: check Monaco models keys and properties
+        const activeEditor = getActiveEditor();
+        const activeModel = activeEditor ? activeEditor.getModel() : null;
+        const models = monaco.editor.getModels();
+        models.forEach((m, idx) => {
+          try {
+            logDiagnostics(`[Model ${idx}] URI: ${m.uri.toString()}, Keys: ${Object.keys(m).filter(k => typeof m[k] !== 'function').join(', ')}`);
+            // Check for hidden or private fields
+            for (const key in m) {
+              if (key.toLowerCase().includes('file') || key.toLowerCase().includes('name') || key.toLowerCase().includes('path') || key.toLowerCase().includes('title')) {
+                logDiagnostics(`  [Model ${idx}] private field ${key}: ${String(m[key])}`);
+              }
+            }
+          } catch (e) {
+            logDiagnostics(`Error listing model details: ${e.message}`, 'error');
+          }
         });
+
+        const files = models
+          .map((model) => {
+            const path = model.uri.path;
+            const name = path.replace(/^\//, '');
+            return {
+              name: name || 'untitled',
+              language: model.getLanguageId(),
+              isActive: activeModel ? activeModel.uri.toString() === model.uri.toString() : false
+            };
+          })
+          .filter(file => file.name && !file.name.includes('output') && !file.name.includes('terminal') && !file.name.startsWith('inmemory'));
+
         window.postMessage({
           source: 'vibescript-inject',
           action: 'LIST_FILES_RESULT',
@@ -275,14 +338,31 @@
       case 'READ_FILE_BY_NAME': {
         const filename = event.data.payload?.filename;
         const reqId = event.data.payload?.requestId;
-        const allEditors = monaco.editor.getEditors();
-        const target = allEditors.find((e) => {
-          const model = e.getModel();
-          return model && model.uri.path.includes(filename);
+        const monaco = getMonaco();
+        if (!monaco || !monaco.editor) {
+          window.postMessage({
+            source: 'vibescript-inject',
+            action: 'CODE_RESULT',
+            payload: { requestId: reqId, context: null }
+          }, '*');
+          break;
+        }
+
+        const targetModel = monaco.editor.getModels().find((model) => {
+          const name = model.uri.path.replace(/^\//, '');
+          return name === filename || model.uri.path.includes(filename);
         });
-        if (target) {
-          target.focus();
-          const ctx = contextFromEditor(target);
+
+        if (targetModel) {
+          const code = targetModel.getValue();
+          const language = targetModel.getLanguageId();
+          const ctx = {
+            code,
+            language,
+            position: null,
+            selection: null,
+            selectedText: ''
+          };
           window.postMessage({
             source: 'vibescript-inject',
             action: 'CODE_RESULT',
@@ -500,13 +580,270 @@
     console.log('[VibeScript] Inline completion providers registered successfully');
   }
 
-  // Poll for Monaco availability
-  const interval = setInterval(() => {
+  // --- FLOATING CODE SELECTION PILL FOR CHAT ATTACHMENTS ---
+  let selectionPill = null;
+  const attachedEditors = new WeakSet();
+
+  function showFloatingPill(editor, selection) {
+    try {
+      const selectionText = editor.getModel()?.getValueInRange(selection) || '';
+      logDiagnostics(`[Pill] showFloatingPill triggered. selection: ${selection.startLineNumber}:${selection.startColumn} to ${selection.endLineNumber}:${selection.endColumn}, length: ${selectionText.length}`);
+
+      const monaco = getMonaco();
+      if (!monaco) {
+        logDiagnostics('[Pill] Monaco not found in showFloatingPill', 'error');
+        return;
+      }
+
+      // Use explicit Position object from selection coordinates
+      const position = new monaco.Position(selection.endLineNumber, selection.endColumn);
+      let scrolledPos = null;
+      try {
+        if (typeof editor.getScrolledVisiblePosition === 'function') {
+          scrolledPos = editor.getScrolledVisiblePosition(position);
+          logDiagnostics(`[Pill] getScrolledVisiblePosition returned: ${JSON.stringify(scrolledPos)}`);
+        } else {
+          logDiagnostics('[Pill] getScrolledVisiblePosition is not a function on editor', 'warn');
+        }
+      } catch (err) {
+        logDiagnostics(`[Pill] Error calling getScrolledVisiblePosition: ${err.message}`, 'error');
+      }
+
+      const domNode = editor.getDomNode();
+      if (!domNode) {
+        logDiagnostics('[Pill] domNode is null/undefined', 'error');
+        return;
+      }
+
+      if (!scrolledPos) {
+        const topOfLine = typeof editor.getTopForLineNumber === 'function' ? editor.getTopForLineNumber(position.lineNumber) : 100;
+        const editorScrollTop = typeof editor.getScrollTop === 'function' ? editor.getScrollTop() : 0;
+        scrolledPos = {
+          top: topOfLine - editorScrollTop,
+          left: (domNode.clientWidth || 500) / 2
+        };
+        logDiagnostics(`[Pill] Calculated fallback scrolledPos: ${JSON.stringify(scrolledPos)}`);
+      }
+
+      const rect = domNode.getBoundingClientRect();
+      const top = rect.top + scrolledPos.top - 38;
+      const left = rect.left + scrolledPos.left;
+
+      logDiagnostics(`[Pill] Calculated positioning: top=${top}, left=${left}, rectTop=${rect.top}, scrolledTop=${scrolledPos.top}`);
+
+      if (!selectionPill) {
+        selectionPill = document.createElement('button');
+        selectionPill.id = 'vibescript-selection-pill';
+        
+        // Create SVG element programmatically to avoid Trusted Types error
+        const svgNamespace = "http://www.w3.org/2000/svg";
+        const svgEl = document.createElementNS(svgNamespace, "svg");
+        svgEl.setAttribute("width", "11");
+        svgEl.setAttribute("height", "11");
+        svgEl.setAttribute("viewBox", "0 0 24 24");
+        svgEl.setAttribute("fill", "none");
+        svgEl.setAttribute("stroke", "currentColor");
+        svgEl.setAttribute("stroke-width", "3");
+        svgEl.setAttribute("stroke-linecap", "round");
+        svgEl.setAttribute("stroke-linejoin", "round");
+        Object.assign(svgEl.style, {
+          marginRight: "4px",
+          display: "inline-block",
+          verticalAlign: "middle"
+        });
+
+        const line1 = document.createElementNS(svgNamespace, "line");
+        line1.setAttribute("x1", "12");
+        line1.setAttribute("y1", "5");
+        line1.setAttribute("x2", "12");
+        line1.setAttribute("y2", "19");
+        svgEl.appendChild(line1);
+
+        const line2 = document.createElementNS(svgNamespace, "line");
+        line2.setAttribute("x1", "5");
+        line2.setAttribute("y1", "12");
+        line2.setAttribute("x2", "19");
+        line2.setAttribute("y2", "12");
+        svgEl.appendChild(line2);
+
+        const spanEl = document.createElement("span");
+        spanEl.textContent = "Attach to VibeScript";
+        Object.assign(spanEl.style, {
+          verticalAlign: "middle"
+        });
+
+        selectionPill.appendChild(svgEl);
+        selectionPill.appendChild(spanEl);
+
+        Object.assign(selectionPill.style, {
+          position: 'fixed',
+          top: `${top}px`,
+          left: `${left}px`,
+          zIndex: '2147483647',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '5px 12px',
+          backgroundColor: '#18181b',
+          color: '#fafafa',
+          border: '1px solid #27272a',
+          borderRadius: '9999px',
+          fontSize: '11px',
+          fontWeight: '600',
+          fontFamily: 'Outfit, system-ui, -apple-system, sans-serif',
+          cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.16), 0 2px 4px rgba(0,0,0,0.08)',
+          transition: 'transform 0.15s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.1s ease',
+          transform: 'translate(-50%, 0) scale(1)',
+          opacity: '1',
+          lineHeight: '1.2'
+        });
+
+        selectionPill.onmouseenter = () => {
+          selectionPill.style.backgroundColor = '#27272a';
+          selectionPill.style.transform = 'translate(-50%, -2px) scale(1.02)';
+        };
+        selectionPill.onmouseleave = () => {
+          selectionPill.style.backgroundColor = '#18181b';
+          selectionPill.style.transform = 'translate(-50%, 0) scale(1)';
+        };
+
+        document.body.appendChild(selectionPill);
+        logDiagnostics('[Pill] Appended floating selection pill to document body', 'success');
+      } else {
+        selectionPill.style.top = `${top}px`;
+        selectionPill.style.left = `${left}px`;
+        selectionPill.style.opacity = '1';
+        selectionPill.style.transform = 'translate(-50%, 0) scale(1)';
+      }
+
+      selectionPill.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const model = editor.getModel();
+        if (!model) return;
+
+        const filename = model.uri ? model.uri.path.replace(/^\//, '') : 'untitled.gs';
+        const selectedText = model.getValueInRange(selection);
+
+        logDiagnostics(`[Pill] selectionPill clicked. Attaching selection: ${filename}`);
+
+        window.postMessage({
+          source: 'vibescript-inject',
+          action: 'ATTACH_SELECTION',
+          payload: {
+            filename,
+            content: selectedText,
+            startLine: selection.startLineNumber,
+            endLine: selection.endLineNumber
+          }
+        }, '*');
+
+        hideFloatingPill();
+      };
+    } catch (err) {
+      logDiagnostics(`[Pill] Exception in showFloatingPill: ${err.message}`, 'error');
+    }
+  }
+
+  function hideFloatingPill() {
+    if (selectionPill) {
+      selectionPill.remove();
+      selectionPill = null;
+    }
+  }
+
+  function attachSelectionListeners() {
     const monaco = getMonaco();
-    if (monaco && monaco.editor && monaco.languages) {
-      clearInterval(interval);
-      setupCompletions();
-      console.log('[VibeScript] Monaco editor bridge successfully initialized');
+    if (!monaco || !monaco.editor) return;
+
+    function hookEditor(editor) {
+      if (attachedEditors.has(editor)) return;
+      attachedEditors.add(editor);
+      logDiagnostics('Successfully hooked editor instance!', 'success');
+
+      editor.onDidChangeCursorSelection((e) => {
+        try {
+          const selection = e.selection;
+          const isEmpty = selection ? selection.isEmpty() : true;
+          logDiagnostics(`[Event] onDidChangeCursorSelection fired. isEmpty: ${isEmpty}`);
+          if (selection && !isEmpty) {
+            showFloatingPill(editor, selection);
+          } else {
+            hideFloatingPill();
+          }
+        } catch (err) {
+          logDiagnostics(`[Event] Error in onDidChangeCursorSelection: ${err.message}`, 'error');
+        }
+      });
+
+      editor.onDidScrollChange(() => {
+        hideFloatingPill();
+      });
+    }
+
+    // Initial hook
+    monaco.editor.getEditors().forEach(hookEditor);
+
+    // Dynamic hooks on creation
+    monaco.editor.onDidCreateEditor((editor) => {
+      logDiagnostics('onDidCreateEditor fired.');
+      hookEditor(editor);
+    });
+
+    // Defensive polling check for newly loaded/replaced editor instances
+    setInterval(() => {
+      const currentMonaco = getMonaco();
+      if (currentMonaco && currentMonaco.editor) {
+        currentMonaco.editor.getEditors().forEach(hookEditor);
+      }
+    }, 2000);
+
+    document.addEventListener('mousedown', (e) => {
+      if (selectionPill && !selectionPill.contains(e.target)) {
+        setTimeout(() => {
+          const editor = getActiveEditor();
+          if (editor) {
+            const selection = editor.getSelection();
+            if (!selection || selection.isEmpty()) {
+              hideFloatingPill();
+            }
+          } else {
+            hideFloatingPill();
+          }
+        }, 100);
+      }
+    });
+  }
+
+  // Poll for Monaco availability
+  let pollAttempts = 0;
+  const interval = setInterval(() => {
+    try {
+      pollAttempts++;
+      const monaco = getMonaco();
+      
+      if (pollAttempts % 5 === 0) {
+        logDiagnostics(`Polling for Monaco. Attempt ${pollAttempts}. Found monaco: ${!!monaco}`, 'warn');
+      }
+
+      if (monaco && monaco.editor && monaco.languages) {
+        clearInterval(interval);
+        logDiagnostics('Monaco found! Setting up autocompletes and listeners...', 'success');
+        setupCompletions();
+        attachSelectionListeners();
+        logDiagnostics('Monaco editor bridge successfully initialized', 'success');
+        window.postMessage({
+          source: 'vibescript-inject',
+          action: 'MONACO_READY'
+        }, '*');
+      }
+    } catch (err) {
+      logDiagnostics('Error in polling loop: ' + err.message + '\n' + err.stack, 'error');
     }
   }, 1000);
+  } catch (err) {
+    logDiagnostics('Fatal script error during load: ' + err.message + '\n' + err.stack, 'error');
+  }
 })();
