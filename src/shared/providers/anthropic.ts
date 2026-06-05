@@ -19,6 +19,10 @@ export class AnthropicProvider implements Provider {
     return this.parseResponse(data);
   }
 
+  private isThinkingCapable(model: string): boolean {
+    return /claude-(3-7|opus-4|sonnet-4|haiku-4)/i.test(model);
+  }
+
   async *stream(req: StreamRequest, config: ProviderConfig): AsyncGenerator<ProviderEvent> {
     const url = 'https://api.anthropic.com/v1/messages';
     const systemMsg = req.messages.find((m) => m.role === 'system');
@@ -31,6 +35,10 @@ export class AnthropicProvider implements Provider {
       max_tokens: maxTokens,
       stream: true,
     };
+
+    if (this.isThinkingCapable(config.model)) {
+      payload.thinking = { type: 'adaptive' };
+    }
 
     if (req.tools && req.tools.length > 0) {
       payload.tools = req.tools.map((t) => ({
@@ -67,6 +75,7 @@ export class AnthropicProvider implements Provider {
     let toolCallIndex = 0;
     let inputTokens = 0;
     let outputTokens = 0;
+    let inThinkingBlock = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -88,9 +97,12 @@ export class AnthropicProvider implements Provider {
           switch (eventType) {
             case 'content_block_start': {
               const block = event.content_block;
-              if (block.type === 'text') {
-                // text block start - nothing special needed
+              if (block.type === 'thinking') {
+                inThinkingBlock = true;
+              } else if (block.type === 'text') {
+                inThinkingBlock = false;
               } else if (block.type === 'tool_use') {
+                inThinkingBlock = false;
                 yield { type: 'tool_call_start', index: toolCallIndex, id: block.id, name: block.name };
                 currentToolCall = { id: block.id, name: block.name, arguments: block.input ? JSON.stringify(block.input) : '', index: toolCallIndex };
                 toolCallIndex++;
@@ -99,7 +111,9 @@ export class AnthropicProvider implements Provider {
             }
             case 'content_block_delta': {
               const delta = event.delta;
-              if (delta.type === 'text_delta') {
+              if (delta.type === 'thinking_delta' && delta.thinking) {
+                yield { type: 'reasoning_delta', delta: delta.thinking };
+              } else if (delta.type === 'text_delta') {
                 accumulatedText += delta.text;
                 yield { type: 'text_delta', delta: delta.text };
               } else if (delta.type === 'input_json_delta') {
@@ -111,7 +125,9 @@ export class AnthropicProvider implements Provider {
               break;
             }
             case 'content_block_stop': {
-              if (currentToolCall) {
+              if (inThinkingBlock) {
+                inThinkingBlock = false;
+              } else if (currentToolCall) {
                 yield { type: 'tool_call_stop', index: currentToolCall.index };
                 try {
                   toolCalls.push({

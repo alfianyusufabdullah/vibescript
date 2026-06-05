@@ -43,14 +43,27 @@ export class GeminiProvider implements Provider {
     return this.parseResponse(data);
   }
 
+  private isThinkingCapable(model: string): boolean {
+    return /gemini-2\.5/i.test(model);
+  }
+
   async *stream(req: StreamRequest, config: ProviderConfig): AsyncGenerator<ProviderEvent> {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:streamGenerateContent?alt=sse&key=${config.apiKey}`;
     const systemMsg = req.messages.find((m) => m.role === 'system');
 
+    const generationConfig: Record<string, unknown> = {
+      temperature: config.temperature ?? 0.3,
+      maxOutputTokens: config.maxTokens ?? 8192,
+    };
+
+    if (this.isThinkingCapable(config.model)) {
+      generationConfig.thinkingConfig = { includeThoughts: true };
+    }
+
     const payload: Record<string, unknown> = {
       contents: this.toGeminiContents(req.messages),
       systemInstruction: { parts: [{ text: systemMsg?.content || '' }] },
-      generationConfig: { temperature: config.temperature ?? 0.3, maxOutputTokens: config.maxTokens ?? 8192 },
+      generationConfig,
     };
 
     if (req.tools && req.tools.length > 0) {
@@ -100,7 +113,9 @@ export class GeminiProvider implements Provider {
           const parsed = JSON.parse(json) as any;
           const parts = parsed.candidates?.[0]?.content?.parts || [];
           for (const part of parts) {
-            if (part.text) {
+            if (part.thought === true && part.text) {
+              yield { type: 'reasoning_delta', delta: part.text };
+            } else if (part.text) {
               accumulatedText += part.text;
               yield { type: 'text_delta', delta: part.text };
             }
