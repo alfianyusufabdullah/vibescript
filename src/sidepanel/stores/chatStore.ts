@@ -19,7 +19,7 @@ interface ChatState {
   clearHistory: (scriptId: string) => void;
   addSystemMessage: (content: string) => void;
   addUserMessage: (scriptId: string, content: string, attachments?: CodeAttachment[]) => void;
-  addAgentResult: (scriptId: string, finalResponse: string, steps: AgentStep[]) => void;
+  addAgentResult: (scriptId: string, finalResponse: string, steps: AgentStep[], reasoningText?: string) => void;
   setMessages: (msgs: ChatMessage[]) => void;
 }
 
@@ -177,14 +177,15 @@ ${prompt}
     persistChat(scriptId, newMessages);
   },
 
-  addAgentResult: (scriptId: string, finalResponse: string, steps: AgentStep[]) => {
+  addAgentResult: (scriptId: string, finalResponse: string, steps: AgentStep[], reasoningText?: string) => {
     const { messages } = get();
     const assistantMsg: ChatMessage = {
       id: Math.random().toString(36).substring(7),
       role: 'assistant',
       content: finalResponse,
       timestamp: Date.now(),
-      agentSteps: steps
+      agentSteps: steps,
+      reasoningText: reasoningText || undefined,
     };
     const finalMessages = [...messages, assistantMsg];
     set({ messages: finalMessages });

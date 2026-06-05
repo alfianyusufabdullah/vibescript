@@ -6,6 +6,7 @@ export interface PairedStep {
   toolCalls: ToolCall[];
   toolResults: ToolResult[];
   isComplete: boolean;
+  reasoningText?: string;
   timestamp: number;
 }
 
@@ -22,6 +23,7 @@ export function pairSteps(steps: AgentStep[]): PairedStep[] {
         toolCalls: [],
         toolResults: [],
         isComplete: true,
+        reasoningText: step.reasoningText,
         timestamp: step.timestamp
       });
     } else if (step.type === 'tool_call') {
@@ -34,6 +36,7 @@ export function pairSteps(steps: AgentStep[]): PairedStep[] {
           toolCalls: step.toolCalls || [],
           toolResults: nextStep.toolResults || [],
           isComplete: true,
+          reasoningText: step.reasoningText,
           timestamp: step.timestamp
         });
         i++; // skip the tool_result step
@@ -45,6 +48,7 @@ export function pairSteps(steps: AgentStep[]): PairedStep[] {
           toolCalls: step.toolCalls || [],
           toolResults: [],
           isComplete: false,
+          reasoningText: step.reasoningText,
           timestamp: step.timestamp
         });
       }

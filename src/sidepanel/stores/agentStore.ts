@@ -111,10 +111,14 @@ export const useAgentStore = create<AgentState>((set) => ({
             reasoningText: state.reasoningText + text,
           }));
         },
+        onResetStreaming: () => {
+          set({ streamingText: '', currentStepText: '', reasoningText: '' });
+        },
         onStep: (step: AgentStep) => {
           set((state) => ({
             steps: [...state.steps, step],
             currentStepText: '',
+            reasoningText: step.reasoningText !== undefined ? '' : state.reasoningText,
             status: step.type === 'tool_call' ? ('executing_tools' as AgentStatus) : ('thinking' as AgentStatus),
           }));
         },

@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import type { ChatMessage, ToolCall, ToolResult, CodeAttachment } from '../../shared/types';
 import { CombinedToolItem } from './ToolExecutionLog';
 import { pairSteps } from '../utils/agent';
-import { Sparkles, User, Code, X, FileText } from 'lucide-react';
+import { Sparkles, User, Code, X, FileText, Brain, ChevronDown } from 'lucide-react';
 import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface MessageBubbleProps {
@@ -67,6 +67,18 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
           <div className="max-w-[88%] rounded-lg px-3.5 py-2.5 bg-white border border-zinc-200 rounded-tl-none shadow-sm space-y-3">
             {pairedSteps.map((step, idx) => (
               <React.Fragment key={idx}>
+                {step.reasoningText && (
+                  <details className="group text-[11px]">
+                    <summary className="flex items-center gap-1.5 cursor-pointer text-zinc-500 hover:text-zinc-700 font-medium select-none">
+                      <ChevronDown className="w-3 h-3 group-open:rotate-0 -rotate-90 transition-transform" />
+                      <Brain className="w-3.5 h-3.5" />
+                      Thinking
+                    </summary>
+                    <div className="mt-1.5 p-2.5 rounded-md bg-zinc-50 border border-zinc-200 text-zinc-600 text-[10.5px] leading-relaxed">
+                      <MarkdownRenderer content={step.reasoningText} />
+                    </div>
+                  </details>
+                )}
                 {step.content && <MarkdownRenderer content={step.content} />}
                 {step.toolCalls.length > 0 && (
                   <div className="space-y-1.5 my-1.5">
