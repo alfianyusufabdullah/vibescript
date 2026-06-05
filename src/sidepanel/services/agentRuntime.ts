@@ -36,6 +36,7 @@ export interface AgentRuntimeCallbacks {
   onError: (error: string) => void;
   onStreamingText?: (text: string) => void;
   onReasoning?: (text: string) => void;
+  onResetStreaming?: () => void;
 }
 
 export class AgentRuntime {
@@ -163,7 +164,10 @@ ${prompt}
 
       const llmResponse = await this.callLLMWithRetry(providerInstance, model, messages, allowedTools, callbacks, apiKey);
       if (!llmResponse) {
-        eventBus.emit('agent:status', { status: 'error', role: this.role.id });
+        if (!this.cancelled) {
+          eventBus.emit('agent:status', { status: 'error', role: this.role.id });
+          callbacks.onError('LLM call failed');
+        }
         return;
       }
 
@@ -174,6 +178,13 @@ ${prompt}
         this.totalUsage.completionTokens += usage.completionTokens;
         this.totalUsage.totalTokens += usage.totalTokens;
         this.lastPromptTokens = usage.promptTokens;
+      } else {
+        // Estimate token count when provider does not return usage (~3.5 chars per token)
+        const totalChars = messages.reduce((sum, m) => {
+          const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '');
+          return sum + c.length;
+        }, 0);
+        this.lastPromptTokens = Math.ceil(totalChars / 3.5);
       }
 
       const assistantMsg: AgentMessage = {
@@ -193,19 +204,24 @@ ${prompt}
       messages.push(assistantMsg);
 
       if (!toolCalls || toolCalls.length === 0) {
-        callbacks.onStep({ type: 'text', content: text, timestamp: Date.now() });
+        callbacks.onStep({ type: 'text', content: text, reasoningText: this.reasoningText || undefined, timestamp: Date.now() });
+        this.reasoningText = '';
         eventBus.emit('agent:status', { status: 'done', role: this.role.id });
         callbacks.onDone(text);
         return;
       }
 
+      // Separate finish signal from tools that need actual execution (BUG-06)
       const finishCall = toolCalls.find((tc) => tc.name === 'finish');
-      if (finishCall) {
-        const summary = (finishCall.arguments?.summary as string) || '';
+      const executableTools = finishCall ? toolCalls.filter((tc) => tc.name !== 'finish') : toolCalls;
+
+      if (executableTools.length === 0) {
+        const summary = (finishCall?.arguments?.summary as string) || '';
         const finalContent = text
           ? (summary && summary !== text ? `${text}\n\n**Summary:** ${summary}` : text)
           : summary || 'Task finished';
-        callbacks.onStep({ type: 'text', content: finalContent, timestamp: Date.now() });
+        callbacks.onStep({ type: 'text', content: finalContent, reasoningText: this.reasoningText || undefined, timestamp: Date.now() });
+        this.reasoningText = '';
         eventBus.emit('agent:status', { status: 'done', role: this.role.id });
         callbacks.onDone(summary || text);
         return;
@@ -214,14 +230,16 @@ ${prompt}
       callbacks.onStep({
         type: 'tool_call',
         content: text,
-        toolCalls,
+        toolCalls: executableTools,
+        reasoningText: this.reasoningText || undefined,
         timestamp: Date.now(),
       });
+      this.reasoningText = '';
 
       eventBus.emit('agent:status', { status: 'executing_tools', role: this.role.id });
 
       const toolResults: ToolResult[] = [];
-      for (const tc of toolCalls) {
+      for (const tc of executableTools) {
         if (this.cancelled) {
           eventBus.emit('agent:status', { status: 'error', role: this.role.id });
           callbacks.onError('Cancelled');
@@ -250,7 +268,8 @@ ${prompt}
         return;
       }
 
-      const modifiedFile = toolResults.some((r) => r.name === 'edit_file');
+      // Only refresh context when edit_file actually succeeded (BUG-07)
+      const modifiedFile = toolResults.some((r) => r.name === 'edit_file' && r.success === true);
       if (modifiedFile) {
         const fresh = await this.tryReadFile();
         if (fresh) {
@@ -273,6 +292,19 @@ ${prompt}
         toolResults,
         timestamp: Date.now(),
       });
+
+      // Handle finish after all tools have executed (BUG-06)
+      if (finishCall) {
+        const summary = (finishCall.arguments?.summary as string) || '';
+        const finalContent = text
+          ? (summary && summary !== text ? `${text}\n\n**Summary:** ${summary}` : text)
+          : summary || 'Task finished';
+        callbacks.onStep({ type: 'text', content: finalContent, reasoningText: this.reasoningText || undefined, timestamp: Date.now() });
+        this.reasoningText = '';
+        eventBus.emit('agent:status', { status: 'done', role: this.role.id });
+        callbacks.onDone(summary || text);
+        return;
+      }
     }
 
     const currentTokens = this.totalUsage.totalTokens;
@@ -365,8 +397,14 @@ ${prompt}
       }
 
       if (resultText) {
-        messages.splice(0, summarizeUpTo + 1);
-        messages.unshift({
+        // Preserve system message at index 0 when splicing (BUG-01)
+        const hasSystem = messages[0]?.role === 'system';
+        const spliceStart = hasSystem ? 1 : 0;
+        const spliceCount = summarizeUpTo + 1 - spliceStart;
+        if (spliceCount > 0) {
+          messages.splice(spliceStart, spliceCount);
+        }
+        messages.splice(spliceStart, 0, {
           role: 'user',
           content: `[Conversation Summary] ${resultText}`,
         });
@@ -398,6 +436,7 @@ ${prompt}
       let resultUsage: TokenUsage | undefined;
 
       for await (const event of gen) {
+        if (this.cancelled) break; // stop consuming stream on cancel (BUG-08)
         switch (event.type) {
           case 'text_delta':
             accumulatedText += event.delta;
@@ -445,7 +484,14 @@ ${prompt}
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       if (this.cancelled) return null;
 
-      const result = await this.callLLMStreaming(provider, model, messages, tools, apiKey, callbacks.onStreamingText, callbacks.onReasoning);
+      // On retry: reset accumulated streaming text to prevent duplication (BUG-04)
+      if (attempt > 0) {
+        callbacks.onResetStreaming?.();
+      }
+      const streamText = attempt === 0 ? callbacks.onStreamingText : undefined;
+      const streamReasoning = attempt === 0 ? callbacks.onReasoning : undefined;
+
+      const result = await this.callLLMStreaming(provider, model, messages, tools, apiKey, streamText, streamReasoning);
 
       if (!isLLMCallError(result)) {
         return result;
@@ -467,7 +513,14 @@ ${prompt}
         content: `LLM call failed: ${result.error}. Retrying in ${delay / 1000}s... (attempt ${attempt + 2}/${MAX_RETRIES})`,
         timestamp: Date.now(),
       });
-      await new Promise((r) => setTimeout(r, delay));
+      // Cancellable delay — cancel() resolves the promise immediately (BUG-09)
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, delay);
+        const poll = setInterval(() => {
+          if (this.cancelled) { clearTimeout(timer); clearInterval(poll); resolve(); }
+        }, 50);
+        setTimeout(() => clearInterval(poll), delay + 100);
+      });
     }
     return null;
   }
@@ -476,6 +529,10 @@ ${prompt}
     const timeout = tc.name === 'edit_file' ? undefined : TOOL_TIMEOUT;
 
     const exec = toolRegistry.execute(tc.name, tc.arguments, this.toolContext());
+    // Suppress unhandled rejection on exec if the timeout promise wins the race (BUG-02)
+    if (timeout !== undefined) {
+      exec.catch(() => {});
+    }
 
     const raced = timeout !== undefined
       ? Promise.race([
@@ -486,9 +543,11 @@ ${prompt}
         ])
       : exec;
 
+    // Emit start event and capture startTime before awaiting so duration is always accurate (BUG-02)
+    eventBus.emit('tool:start', { name: tc.name, args: tc.arguments });
+    const startTime = Date.now();
+
     try {
-      eventBus.emit('tool:start', { name: tc.name, args: tc.arguments });
-      const startTime = Date.now();
       const result = await raced;
       const duration = Date.now() - startTime;
       eventBus.emit('tool:result', {
@@ -500,6 +559,7 @@ ${prompt}
       });
       return { toolCallId: tc.id, name: tc.name, success: result.success, output: result.output, error: result.error };
     } catch (err: any) {
+      const duration = Date.now() - startTime;
       const result = {
         toolCallId: tc.id,
         name: tc.name,
@@ -512,7 +572,7 @@ ${prompt}
         success: false,
         output: '',
         error: result.error,
-        duration: timeout ?? 0,
+        duration,
       });
       return result;
     }
