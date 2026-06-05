@@ -26,6 +26,7 @@ export interface ChatMessage {
   timestamp: number;
   agentSteps?: AgentStep[];
   attachments?: CodeAttachment[];
+  reasoningText?: string;
 }
 
 export interface Settings {
@@ -168,6 +169,7 @@ export interface AgentStep {
   content: string;
   toolCalls?: ToolCall[];
   toolResults?: ToolResult[];
+  reasoningText?: string;
   timestamp: number;
 }
 
