@@ -122,7 +122,7 @@ export const useAgentStore = create<AgentState>((set) => ({
             status: step.type === 'tool_call' ? ('executing_tools' as AgentStatus) : ('thinking' as AgentStatus),
           }));
         },
-        onDone: async (response: string) => {
+        onDone: async (response: string, usage) => {
           const state = useAgentStore.getState();
           const content = state.streamingText || response;
 
@@ -136,11 +136,9 @@ export const useAgentStore = create<AgentState>((set) => ({
                 const chatMessages = useChatStore.getState().messages;
                 sess.status = 'active';
                 await sessionManager.deactivateOtherSessions(sid, sess.id);
-                await sessionManager.updateSessionMessages(sess, chatMessages, state.steps, {
-                  promptTokens: 0,
-                  completionTokens: 0,
-                  totalTokens: 0,
-                });
+                await sessionManager.updateSessionMessages(sess, chatMessages, state.steps,
+                  usage || { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+                );
               }
             }
           } catch (err) {
