@@ -4,6 +4,8 @@ import { editFileTool } from './edit-file';
 import { listOpenFilesTool } from './list-open-files';
 import { readFileByNameTool } from './read-file-by-name';
 import { finishTool } from './finish';
+import { batchReadFilesTool } from './batch-read-files';
+import { searchCodeTool } from './search-code';
 
 export function registerBuiltinTools(): void {
   toolRegistry.register(readActiveFileTool);
@@ -11,4 +13,6 @@ export function registerBuiltinTools(): void {
   toolRegistry.register(listOpenFilesTool);
   toolRegistry.register(readFileByNameTool);
   toolRegistry.register(finishTool);
+  toolRegistry.register(batchReadFilesTool);
+  toolRegistry.register(searchCodeTool);
 }
