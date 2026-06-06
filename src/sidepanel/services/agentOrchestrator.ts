@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { AgentRole, Provider, CodeAttachment, AgentStep } from '../../shared/types';
+import type { AgentRole, Provider, CodeAttachment, AgentStep, TokenUsage } from '../../shared/types';
 import { AgentRuntime } from './agentRuntime';
 import type { AgentRuntimeCallbacks } from './agentRuntime';
 
@@ -7,7 +7,59 @@ export interface SubAgentResult {
   text: string;
   steps: AgentStep[];
   role: string;
+  usage?: TokenUsage;
+  data?: unknown;
 }
+
+export interface SubAgentTask {
+  role: AgentRole;
+  task: string;
+  provider: Provider;
+  apiKey: string;
+  model: string;
+  editorContext: any;
+  scriptId: string;
+  outputSchema?: Record<string, unknown>;
+}
+
+// Agent Message Bus — for inter-agent communication
+export interface AgentBusMessage {
+  from: string;
+  channel: string;
+  payload: unknown;
+  timestamp: number;
+}
+
+type AgentMessageHandler = (message: AgentBusMessage) => void;
+
+class AgentMessageBus {
+  private channels = new Map<string, Set<AgentMessageHandler>>();
+
+  subscribe(channel: string, handler: AgentMessageHandler): () => void {
+    if (!this.channels.has(channel)) this.channels.set(channel, new Set());
+    this.channels.get(channel)!.add(handler);
+    return () => this.channels.get(channel)?.delete(handler);
+  }
+
+  publish(from: string, channel: string, payload: unknown): void {
+    const handlers = this.channels.get(channel);
+    if (!handlers) return;
+    const message: AgentBusMessage = { from, channel, payload, timestamp: Date.now() };
+    for (const handler of handlers) {
+      try { handler(message); } catch { /* ignore handler errors */ }
+    }
+  }
+
+  clearChannel(channel: string): void {
+    this.channels.delete(channel);
+  }
+
+  clear(): void {
+    this.channels.clear();
+  }
+}
+
+export const agentMessageBus = new AgentMessageBus();
 
 export class AgentOrchestrator {
   private runtimes = new Map<string, AgentRuntime>();
@@ -24,7 +76,7 @@ export class AgentOrchestrator {
     attachments?: CodeAttachment[]
   ): Promise<void> {
     const runtime = new AgentRuntime(role);
-    const runtimeId = `${role.id}_${Date.now()}`;
+    const runtimeId = `${role.id}_${this.generateId()}`;
     this.runtimes.set(runtimeId, runtime);
 
     try {
@@ -41,36 +93,54 @@ export class AgentOrchestrator {
     apiKey: string,
     model: string,
     editorContext: any,
-    scriptId: string
+    scriptId: string,
+    outputSchema?: Record<string, unknown>
   ): Promise<SubAgentResult> {
     return new Promise((resolve, reject) => {
       const steps: AgentStep[] = [];
       const runtime = new AgentRuntime(role);
-      const runtimeId = `${role.id}_sub_${Date.now()}`;
+      const runtimeId = `${role.id}_sub_${this.generateId()}`;
       this.runtimes.set(runtimeId, runtime);
 
+      const finalTask = outputSchema
+        ? `${task}\n\nOutput your result as valid JSON matching this schema:\n${JSON.stringify(outputSchema, null, 2)}\nReturn ONLY the JSON, no other text.`
+        : task;
+
       runtime
-        .run(task, provider, apiKey, model, editorContext, scriptId, {
-          onStep: (step) => {
-            steps.push(step);
-          },
-          onDone: (response) => {
+        .run(finalTask, provider, apiKey, model, editorContext, scriptId, {
+          onStep: (step) => { steps.push(step); },
+          onDone: (response, usage) => {
             this.runtimes.delete(runtimeId);
-            resolve({ text: response, steps, role: role.id });
+            let data: unknown;
+            if (outputSchema) {
+              const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/) ||
+                response.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+              if (jsonMatch) {
+                try { data = JSON.parse(jsonMatch[1] || jsonMatch[0]); } catch { /* ignore */ }
+              }
+            }
+            resolve({ text: response, steps, role: role.id, usage, data });
           },
           onError: (error) => {
             this.runtimes.delete(runtimeId);
             reject(new Error(error));
           },
-          onStreamingText: () => {
-            // sub-agent streaming text is captured via onDone
-          },
+          onStreamingText: () => { /* sub-agent streaming captured via onDone */ },
         })
         .catch((err) => {
           this.runtimes.delete(runtimeId);
           reject(err);
         });
     });
+  }
+
+  async runSubAgentsParallel(tasks: SubAgentTask[]): Promise<Array<SubAgentResult | null>> {
+    const settled = await Promise.allSettled(
+      tasks.map((t) =>
+        this.runSubAgent(t.role, t.task, t.provider, t.apiKey, t.model, t.editorContext, t.scriptId, t.outputSchema)
+      )
+    );
+    return settled.map((r) => (r.status === 'fulfilled' ? r.value : null));
   }
 
   cancel(roleId?: string): void {
@@ -89,6 +159,9 @@ export class AgentOrchestrator {
     }
   }
 
+  private generateId(): string {
+    return `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  }
 }
 
 export const agentOrchestrator = new AgentOrchestrator();
