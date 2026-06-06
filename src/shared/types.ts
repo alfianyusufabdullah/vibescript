@@ -147,6 +147,7 @@ export interface AgentRole {
   systemPrompt: string;
   allowedTools: '*' | string[];
   color: string;
+  maxSteps?: number;
 }
 
 export type AgentStatus = 'idle' | 'thinking' | 'executing_tools' | 'done' | 'error' | 'cancelled';
