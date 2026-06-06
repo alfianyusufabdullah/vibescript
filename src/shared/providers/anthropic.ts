@@ -61,7 +61,7 @@ export class AnthropicProvider implements Provider {
 
     if (!response.ok) {
       const errorText = await response.text();
-      const isPermanent = /\b(401|400|403|404)\b/.test(String(response.status));
+      const isPermanent = /\b(400|401|403|404)\b/.test(String(response.status));
       yield { type: 'error', error: `Anthropic API Error: ${response.status} - ${errorText}`, retriable: !isPermanent };
       return;
     }
@@ -136,6 +136,9 @@ export class AnthropicProvider implements Provider {
                     arguments: JSON.parse(currentToolCall.arguments),
                   });
                 } catch {
+                  console.warn(
+                    `[VibeScript] Failed to parse tool call arguments for "${currentToolCall.name}". Raw: ${currentToolCall.arguments.slice(0, 100)}`
+                  );
                   toolCalls.push({
                     id: currentToolCall.id || '',
                     name: currentToolCall.name || '',

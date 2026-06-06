@@ -53,7 +53,7 @@ export class OpenAIProvider implements Provider {
 
     if (!response.ok) {
       const errorText = await response.text();
-      const isPermanent = /\b(401|400|403|404)\b/.test(String(response.status));
+      const isPermanent = /\b(400|401|403|404)\b/.test(String(response.status));
       yield { type: 'error', error: `OpenAI API Error: ${response.status} - ${errorText}`, retriable: !isPermanent };
       return;
     }
