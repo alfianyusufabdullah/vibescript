@@ -11,9 +11,26 @@ import { eventBus } from '../../shared/eventBus';
 
 const MAX_STEPS = 25;
 const TOOL_TIMEOUT = 10_000;
+
+const LONG_TOOL_TIMEOUT = 30_000; // for multi-file tools
 const CONTEXT_WARN_RATIO = 0.7;
 const CONTEXT_CRITICAL_RATIO = 0.85;
 const MAX_RETRIES = 3;
+const CONTEXT_KEEP_MESSAGES = 20; // sliding window size (non-system messages)
+
+// Tools that write to the editor — run sequentially and invalidate caches
+const MUTATING_TOOLS = new Set(['edit_file']);
+// Tools with no timeout (user approval required)
+const NO_TIMEOUT_TOOLS = new Set(['edit_file']);
+// Tools that may take longer due to multi-file operations
+const LONG_TIMEOUT_TOOL_NAMES = new Set(['search_code', 'batch_read_files']);
+
+// Cheaper models for internal operations (summarization, etc.)
+const SUMMARIZATION_MODELS: Partial<Record<ProviderName, string>> = {
+  anthropic: 'claude-3-5-haiku-latest',
+  openai: 'gpt-4o-mini',
+  gemini: 'gemini-2.0-flash',
+};
 
 interface LLMCallResult {
   text: string;
@@ -32,7 +49,7 @@ function isLLMCallError(v: LLMCallResult | LLMCallError): v is LLMCallError {
 
 export interface AgentRuntimeCallbacks {
   onStep: (step: AgentStep) => void;
-  onDone: (response: string) => void;
+  onDone: (response: string, usage?: TokenUsage) => void;
   onError: (error: string) => void;
   onStreamingText?: (text: string) => void;
   onReasoning?: (text: string) => void;
@@ -48,6 +65,7 @@ export class AgentRuntime {
   private stopRequested = false;
   private reasoningText = '';
   private currentProvider: Provider | null = null;
+  private currentProviderName: ProviderName | null = null;
   private currentModel = '';
   private currentApiKey = '';
 
@@ -108,7 +126,7 @@ ${prompt}
     ];
 
     const chatHistory = useChatStore.getState().messages;
-    const recentHistory = chatHistory.slice(-6);
+    const recentHistory = chatHistory.slice(-10);
     for (const msg of recentHistory) {
       if (msg.role === 'user') {
         let msgContent = msg.content;
@@ -130,6 +148,7 @@ ${prompt}
 
     const providerInstance = providerRegistry.get(provider, { apiKey, model });
     this.currentProvider = providerInstance;
+    this.currentProviderName = provider;
     this.currentModel = model;
     this.currentApiKey = apiKey;
 
@@ -137,7 +156,9 @@ ${prompt}
       ? undefined
       : this.role.allowedTools;
 
-    for (let step = 0; step < MAX_STEPS; step++) {
+    const maxSteps = this.role.maxSteps || MAX_STEPS;
+
+    for (let step = 0; step < maxSteps; step++) {
       if (this.cancelled) {
         eventBus.emit('agent:status', { status: 'error', role: this.role.id });
         callbacks.onError('Cancelled');
@@ -146,7 +167,7 @@ ${prompt}
 
       if (this.stopRequested) {
         eventBus.emit('agent:status', { status: 'done', role: this.role.id });
-        callbacks.onDone('Task finished.');
+        callbacks.onDone('Task finished.', this.totalUsage);
         return;
       }
 
@@ -207,7 +228,7 @@ ${prompt}
         callbacks.onStep({ type: 'text', content: text, reasoningText: this.reasoningText || undefined, timestamp: Date.now() });
         this.reasoningText = '';
         eventBus.emit('agent:status', { status: 'done', role: this.role.id });
-        callbacks.onDone(text);
+        callbacks.onDone(text, this.totalUsage);
         return;
       }
 
@@ -223,7 +244,7 @@ ${prompt}
         callbacks.onStep({ type: 'text', content: finalContent, reasoningText: this.reasoningText || undefined, timestamp: Date.now() });
         this.reasoningText = '';
         eventBus.emit('agent:status', { status: 'done', role: this.role.id });
-        callbacks.onDone(summary || text);
+        callbacks.onDone(summary || text, this.totalUsage);
         return;
       }
 
@@ -238,21 +259,20 @@ ${prompt}
 
       eventBus.emit('agent:status', { status: 'executing_tools', role: this.role.id });
 
-      const toolResults: ToolResult[] = [];
-      for (const tc of executableTools) {
-        if (this.cancelled) {
-          eventBus.emit('agent:status', { status: 'error', role: this.role.id });
-          callbacks.onError('Cancelled');
-          return;
-        }
+      if (this.cancelled) {
+        eventBus.emit('agent:status', { status: 'error', role: this.role.id });
+        callbacks.onError('Cancelled');
+        return;
+      }
 
-        const result = await this.executeToolWithTimeout(tc);
-        toolResults.push(result);
+      const toolResults = await this.executeToolsWithParallelism(executableTools);
 
+      // Push tool messages in original order
+      for (let i = 0; i < executableTools.length; i++) {
         messages.push({
           role: 'tool',
-          tool_call_id: tc.id,
-          content: JSON.stringify(result),
+          tool_call_id: executableTools[i].id,
+          content: JSON.stringify(toolResults[i]),
         });
       }
 
@@ -264,7 +284,7 @@ ${prompt}
           timestamp: Date.now(),
         });
         eventBus.emit('agent:status', { status: 'done', role: this.role.id });
-        callbacks.onDone('Changes rejected. Agent stopped.');
+        callbacks.onDone('Changes rejected. Agent stopped.', this.totalUsage);
         return;
       }
 
@@ -302,14 +322,60 @@ ${prompt}
         callbacks.onStep({ type: 'text', content: finalContent, reasoningText: this.reasoningText || undefined, timestamp: Date.now() });
         this.reasoningText = '';
         eventBus.emit('agent:status', { status: 'done', role: this.role.id });
-        callbacks.onDone(summary || text);
+        callbacks.onDone(summary || text, this.totalUsage);
         return;
       }
     }
 
     const currentTokens = this.totalUsage.totalTokens;
+    const maxStepsFinal = this.role.maxSteps || MAX_STEPS;
     eventBus.emit('agent:status', { status: 'error', role: this.role.id });
-    callbacks.onError(`Max steps (${MAX_STEPS}) reached after ~${(currentTokens / 1000).toFixed(0)}K tokens`);
+    callbacks.onError(`Max steps (${maxStepsFinal}) reached after ~${(currentTokens / 1000).toFixed(0)}K tokens`);
+  }
+
+  private async executeToolsWithParallelism(tools: ToolCall[]): Promise<ToolResult[]> {
+    const readOnlyWithIdx: Array<{ tc: ToolCall; idx: number }> = [];
+    const mutatingWithIdx: Array<{ tc: ToolCall; idx: number }> = [];
+
+    for (let i = 0; i < tools.length; i++) {
+      if (MUTATING_TOOLS.has(tools[i].name)) {
+        mutatingWithIdx.push({ tc: tools[i], idx: i });
+      } else {
+        readOnlyWithIdx.push({ tc: tools[i], idx: i });
+      }
+    }
+
+    // Execute read-only tools in parallel
+    const readOnlySettled = await Promise.allSettled(
+      readOnlyWithIdx.map(({ tc }) => this.executeToolWithTimeout(tc))
+    );
+
+    // Execute mutating tools sequentially
+    const mutatingResults: ToolResult[] = [];
+    for (const { tc } of mutatingWithIdx) {
+      if (this.cancelled) {
+        // Return partial results — caller checks cancelled
+        mutatingResults.push({ toolCallId: tc.id, name: tc.name, success: false, output: '', error: 'Cancelled' });
+        continue;
+      }
+      mutatingResults.push(await this.executeToolWithTimeout(tc));
+    }
+
+    // Reconstruct results in original order
+    const results = new Array<ToolResult>(tools.length);
+    let roIdx = 0;
+    let mutIdx = 0;
+    for (let i = 0; i < tools.length; i++) {
+      if (MUTATING_TOOLS.has(tools[i].name)) {
+        results[i] = mutatingResults[mutIdx++];
+      } else {
+        const settled = readOnlySettled[roIdx++];
+        results[i] = settled.status === 'fulfilled'
+          ? settled.value
+          : { toolCallId: tools[i].id, name: tools[i].name, success: false, output: '', error: String((settled as PromiseRejectedResult).reason?.message || 'Tool execution failed') };
+      }
+    }
+    return results;
   }
 
   private toolContext(): ToolContext {
@@ -340,26 +406,15 @@ ${prompt}
       return;
     }
 
-    const systemIndices: number[] = [];
-    for (let i = 0; i < messages.length; i++) {
-      if (messages[i].role === 'system') systemIndices.push(i);
-    }
-    if (systemIndices.length > 1) {
-      for (let i = systemIndices.length - 2; i >= 0; i--) {
-        messages.splice(systemIndices[i], 1);
-      }
-    }
+    // Sliding window: keep last CONTEXT_KEEP_MESSAGES non-system messages
+    const systemMsg = messages.find((m) => m.role === 'system');
+    const nonSystem = messages.filter((m) => m.role !== 'system');
 
-    const assistantIndices = messages
-      .map((m, i) => (m.role === 'assistant' ? i : -1))
-      .filter((i) => i !== -1);
-
-    if (assistantIndices.length > 2) {
-      const keepFrom = assistantIndices[assistantIndices.length - 2];
-      const userIdx = messages.findIndex((m) => m.role === 'user');
-      if (userIdx >= 0 && keepFrom > userIdx) {
-        messages.splice(userIdx + 1, keepFrom - userIdx - 1);
-      }
+    if (nonSystem.length > CONTEXT_KEEP_MESSAGES) {
+      const kept = nonSystem.slice(-CONTEXT_KEEP_MESSAGES);
+      messages.splice(0, messages.length);
+      if (systemMsg) messages.push(systemMsg);
+      messages.push(...kept);
     }
   }
 
@@ -375,6 +430,9 @@ ${prompt}
     const summarizeUpTo = assistantIndices[assistantIndices.length - 3];
     const toSummarize = messages.slice(0, summarizeUpTo + 1);
 
+    // Use cheaper model for summarization when available
+    const cheapModel = (this.currentProviderName && SUMMARIZATION_MODELS[this.currentProviderName]) || this.currentModel;
+
     try {
       const summaryMessages: AgentMessage[] = [
         { role: 'system', content: 'Summarize the key points from this conversation history concisely.' },
@@ -383,8 +441,8 @@ ${prompt}
       ];
 
       const gen = this.currentProvider.stream(
-        { model: this.currentModel, messages: summaryMessages },
-        { apiKey: this.currentApiKey || '', model: this.currentModel }
+        { model: cheapModel, messages: summaryMessages },
+        { apiKey: this.currentApiKey || '', model: cheapModel }
       );
 
       let resultText = '';
@@ -484,8 +542,9 @@ ${prompt}
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       if (this.cancelled) return null;
 
-      // On retry: reset accumulated streaming text to prevent duplication (BUG-04)
+      // On retry: reset accumulated streaming text and reasoning to prevent duplication (BUG-04)
       if (attempt > 0) {
+        this.reasoningText = '';
         callbacks.onResetStreaming?.();
       }
       const streamText = attempt === 0 ? callbacks.onStreamingText : undefined;
@@ -526,7 +585,14 @@ ${prompt}
   }
 
   private async executeToolWithTimeout(tc: ToolCall): Promise<ToolResult> {
-    const timeout = tc.name === 'edit_file' ? undefined : TOOL_TIMEOUT;
+    let timeout: number | undefined;
+    if (NO_TIMEOUT_TOOLS.has(tc.name)) {
+      timeout = undefined;
+    } else if (LONG_TIMEOUT_TOOL_NAMES.has(tc.name)) {
+      timeout = LONG_TOOL_TIMEOUT;
+    } else {
+      timeout = TOOL_TIMEOUT;
+    }
 
     const exec = toolRegistry.execute(tc.name, tc.arguments, this.toolContext());
     // Suppress unhandled rejection on exec if the timeout promise wins the race (BUG-02)
