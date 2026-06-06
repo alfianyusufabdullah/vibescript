@@ -101,21 +101,10 @@ export const CombinedToolItem: React.FC<{
         </span>
       </button>
       {expanded && (
-        <div className="px-2.5 pb-2 border-t border-zinc-200 pt-1.5 space-y-1.5">
-          <div>
-            <div className="text-[10px] text-zinc-500 font-medium mb-0.5">Arguments:</div>
-            <pre className="text-[10px] text-zinc-700 bg-white border border-zinc-200 rounded p-1.5 overflow-x-auto font-mono leading-relaxed">
-              {JSON.stringify(toolCall.arguments, null, 2)}
-            </pre>
-          </div>
-          {toolResult && (
-            <div>
-              <div className="text-[10px] text-zinc-500 font-medium mb-0.5">Output:</div>
-              <pre className="text-[10px] text-zinc-700 bg-white border border-zinc-200 rounded p-1.5 overflow-x-auto font-mono leading-relaxed max-h-[120px] overflow-y-auto">
-                {toolResult.output || toolResult.error || '(empty)'}
-              </pre>
-            </div>
-          )}
+        <div className="px-2.5 pb-2 border-t border-zinc-200 pt-1.5">
+          <pre className="text-[10px] text-zinc-700 bg-white border border-zinc-200 rounded p-1.5 overflow-x-auto font-mono leading-relaxed">
+            {JSON.stringify(toolCall.arguments, null, 2)}
+          </pre>
         </div>
       )}
     </div>

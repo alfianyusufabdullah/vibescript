@@ -148,10 +148,10 @@ export const ChatView: React.FC = () => {
     return pairSteps(agentSteps);
   }, [agentSteps]);
 
-  // Auto-scroll to bottom of messages
+  // Auto-scroll to bottom — instant during streaming so it keeps up, smooth for message transitions
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading, agentSteps, currentStepText]);
+    messagesEndRef.current?.scrollIntoView({ behavior: isAgentRunning ? 'instant' : 'smooth' });
+  }, [messages, isLoading, agentSteps, currentStepText, reasoningText, isAgentRunning]);
 
   // Poll active file context on mount and when input gets focus
   useEffect(() => {
