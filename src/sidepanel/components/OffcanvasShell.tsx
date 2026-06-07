@@ -5,6 +5,12 @@ import { SettingsView } from './SettingsView';
 import { MessageSquare, Settings as SettingsIcon, Sparkles, X } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
 
+const MIN_PANEL_WIDTH_PX = 280;
+const MAX_PANEL_WIDTH_PX = 800;
+const VIEWPORT_MARGIN_PX = 100;
+const TRANSITION_STEP_MS = 50;
+const TRANSITION_DURATION_MS = 350;
+
 const updateIdeLayout = (isOpen: boolean, isInitial: boolean) => {
   const children = Array.from(document.body.children);
   children.forEach((child) => {
@@ -72,7 +78,7 @@ export const OffcanvasShell: React.FC = () => {
     if (isInitial) {
       // Force an immediate Monaco resize for the initial layout bounds
       window.dispatchEvent(new Event('resize'));
-      
+
       const timer = setTimeout(() => {
         document.body.classList.remove('vibescript-no-transition');
         // Clean up no-transition from other body children
@@ -81,19 +87,19 @@ export const OffcanvasShell: React.FC = () => {
           child.classList.remove('vibescript-no-transition');
         });
         setIsInitial(false);
-      }, 50);
+      }, TRANSITION_STEP_MS);
       return () => clearTimeout(timer);
     }
 
     // Trigger window resize event repeatedly during transition to force Monaco resize
     const interval = setInterval(() => {
       window.dispatchEvent(new Event('resize'));
-    }, 50);
+    }, TRANSITION_STEP_MS);
 
     const timeout = setTimeout(() => {
       clearInterval(interval);
       window.dispatchEvent(new Event('resize'));
-    }, 350); // clear after transition completes
+    }, TRANSITION_DURATION_MS);
 
     return () => {
       clearInterval(interval);
@@ -112,8 +118,10 @@ export const OffcanvasShell: React.FC = () => {
     const handleMouseMove = (mouseMoveEvent: MouseEvent) => {
       const deltaX = startX - mouseMoveEvent.clientX;
       const newWidth = startWidth + deltaX;
-      // Clamp width between 280px and 800px (or viewport width minus 100px)
-      const clampedWidth = Math.max(280, Math.min(newWidth, window.innerWidth - 100, 800));
+      const clampedWidth = Math.max(
+        MIN_PANEL_WIDTH_PX,
+        Math.min(newWidth, window.innerWidth - VIEWPORT_MARGIN_PX, MAX_PANEL_WIDTH_PX),
+      );
       setPanelWidth(clampedWidth);
       window.dispatchEvent(new Event('resize'));
     };
@@ -139,7 +147,7 @@ export const OffcanvasShell: React.FC = () => {
       }`}
       style={{
         width: `${panelWidth}px`,
-        transform: isPanelOpen ? 'translateX(0)' : 'translateX(100%)'
+        transform: isPanelOpen ? 'translateX(0)' : 'translateX(100%)',
       }}
     >
       {/* Resizer Handle */}
@@ -193,4 +201,3 @@ export const OffcanvasShell: React.FC = () => {
     </Tabs>
   );
 };
-
