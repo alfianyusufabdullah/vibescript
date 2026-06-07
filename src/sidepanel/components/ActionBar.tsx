@@ -52,7 +52,7 @@ export const ActionBar: React.FC = () => {
       provider,
       apiKey,
       model,
-      editorContext: { ...context, scriptId },
+      editorContext: context,
       scriptId,
       attachments: [],
     });

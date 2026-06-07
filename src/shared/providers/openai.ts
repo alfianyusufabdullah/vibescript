@@ -1,9 +1,38 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Provider, ProviderConfig, GenerateRequest, StreamRequest, GenerateResponse } from './types';
 import type { ProviderEvent, ToolCall, AgentMessage, ToolDefinition } from '../types';
 
 const DEFAULT_TEMPERATURE = 0.3;
 const PERMANENT_HTTP_ERROR_CODES = [400, 401, 403, 404];
+
+interface OpenAIToolCall {
+  id: string;
+  function: { name: string; arguments: string };
+}
+
+interface OpenAIResponse {
+  choices?: Array<{
+    message?: {
+      content?: string;
+      tool_calls?: OpenAIToolCall[];
+    };
+    finish_reason?: string;
+  }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+}
+
+interface OpenAIStreamEvent {
+  choices?: Array<{
+    delta?: {
+      content?: string;
+      tool_calls?: Array<{
+        index: number;
+        id?: string;
+        function?: { name?: string; arguments?: string };
+      }>;
+    };
+  }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+}
 
 function toOpenAITools(tools: ToolDefinition[]): Record<string, unknown>[] {
   return tools.map((t) => ({
@@ -85,7 +114,7 @@ export class OpenAIProvider implements Provider {
         const json = trimmed.slice(6);
         if (json === '[DONE]') continue;
         try {
-          const parsed = JSON.parse(json) as any;
+          const parsed = JSON.parse(json) as OpenAIStreamEvent;
           const delta = parsed.choices?.[0]?.delta;
           if (delta?.content) {
             accumulatedText += delta.content;
@@ -167,16 +196,16 @@ export class OpenAIProvider implements Provider {
     });
   }
 
-  private parseResponse(data: any): GenerateResponse {
+  private parseResponse(data: OpenAIResponse): GenerateResponse {
     const choice = data.choices?.[0];
     const message = choice?.message;
     const text = message?.content || '';
-    const rawToolCalls: any[] = message?.tool_calls || [];
+    const rawToolCalls: OpenAIToolCall[] = message?.tool_calls || [];
     const finishReason = choice?.finish_reason || 'stop';
 
     return {
       text,
-      toolCalls: rawToolCalls.map((tc: any) => {
+      toolCalls: rawToolCalls.map((tc) => {
         let args: Record<string, unknown> = {};
         try {
           args = JSON.parse(tc.function.arguments);

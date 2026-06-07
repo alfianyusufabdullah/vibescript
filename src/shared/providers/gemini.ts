@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Provider, ProviderConfig, GenerateRequest, StreamRequest, GenerateResponse } from './types';
 import type { ProviderEvent, ToolCall, AgentMessage, ToolDefinition } from '../types';
 
@@ -6,6 +5,30 @@ const DEFAULT_TEMPERATURE = 0.3;
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const THINKING_BUDGET = 8192;
 const PERMANENT_HTTP_ERROR_CODES = [400, 401, 403, 404];
+
+interface GeminiPart {
+  text?: string;
+  thought?: boolean;
+  functionCall?: { name: string; args?: Record<string, unknown> };
+  functionResponse?: { name: string; response: unknown };
+}
+
+interface GeminiContent {
+  role: string;
+  parts: GeminiPart[];
+}
+
+interface GeminiResponse {
+  candidates?: Array<{
+    content?: { parts: GeminiPart[] };
+    finishReason?: string;
+  }>;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
+  };
+}
 
 function toGeminiFunctionDeclarations(tools: ToolDefinition[]): Record<string, unknown>[] {
   return tools.map((t) => ({
@@ -116,7 +139,7 @@ export class GeminiProvider implements Provider {
         if (!trimmed || !trimmed.startsWith('data: ')) continue;
         const json = trimmed.slice(6);
         try {
-          const parsed = JSON.parse(json) as any;
+          const parsed = JSON.parse(json) as GeminiResponse;
           const parts = parsed.candidates?.[0]?.content?.parts || [];
           for (const part of parts) {
             if (part.thought === true && part.text) {
@@ -157,19 +180,19 @@ export class GeminiProvider implements Provider {
     return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   }
 
-  private parseResponse(data: any): GenerateResponse {
+  private parseResponse(data: GeminiResponse): GenerateResponse {
     const candidate = data.candidates?.[0];
     const parts = candidate?.content?.parts || [];
-    const text = parts.find((p: any) => p.text)?.text || '';
-    const functionCalls = parts.filter((p: any) => p.functionCall);
+    const text = parts.find((p) => p.text)?.text || '';
+    const functionCalls = parts.filter((p) => p.functionCall);
     const raw = data.usageMetadata;
 
     return {
       text,
-      toolCalls: functionCalls.map((fc: any, i: number) => ({
+      toolCalls: functionCalls.map((fc, i) => ({
         id: `fc_${i}`,
-        name: fc.functionCall.name,
-        arguments: fc.functionCall.args || {},
+        name: fc.functionCall!.name,
+        arguments: fc.functionCall!.args || {},
       })),
       finishReason:
         functionCalls.length > 0 ? 'tool_calls' :
@@ -186,8 +209,8 @@ export class GeminiProvider implements Provider {
     };
   }
 
-  private toGeminiContents(messages: AgentMessage[]): any[] {
-    const contents: any[] = [];
+  private toGeminiContents(messages: AgentMessage[]): GeminiContent[] {
+    const contents: GeminiContent[] = [];
     const toolCallMap = new Map<string, string>();
 
     for (const msg of messages) {
@@ -200,7 +223,7 @@ export class GeminiProvider implements Provider {
           parts: [{ functionResponse: { name: funcName, response: { output: msg.content } } }],
         });
       } else if (msg.role === 'assistant') {
-        const parts: any[] = [];
+        const parts: GeminiPart[] = [];
         if (msg.content) parts.push({ text: msg.content });
         if (msg.tool_calls) {
           for (const tc of msg.tool_calls) {

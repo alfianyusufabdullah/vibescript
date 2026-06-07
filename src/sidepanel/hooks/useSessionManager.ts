@@ -17,8 +17,12 @@ export function useSessionManager(scriptId: string | null, agentStatus: string) 
   }, [sid]);
 
   useEffect(() => {
-    loadSessions();
-  }, [scriptId, agentStatus, loadSessions]);
+    let active = true;
+    sessionManager.listSessions(sid).then((list) => {
+      if (active) setSessions(list);
+    });
+    return () => { active = false; };
+  }, [scriptId, agentStatus, sid]);
 
   const handleNewSession = useCallback(async () => {
     try {

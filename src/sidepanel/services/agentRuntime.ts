@@ -1,5 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import type { Provider as ProviderName, ToolCall, ToolResult, AgentMessage, AgentStep, TokenUsage, CodeAttachment, AgentRole, ToolContext } from '../../shared/types';
+import type { Provider as ProviderName, ToolCall, ToolResult, AgentMessage, AgentStep, TokenUsage, CodeAttachment, AgentRole, ToolContext, MonacoEditorContext } from '../../shared/types';
 import { toolRegistry } from '../../shared/toolRegistry';
 import { AGENT_ROLES } from '../../shared/agents';
 import { providerRegistry } from '../../shared/providers/registry';
@@ -57,7 +56,7 @@ export class AgentRuntime {
     provider: ProviderName,
     apiKey: string,
     model: string,
-    editorContext: any,
+    editorContext: MonacoEditorContext | null,
     _scriptId: string,
     callbacks: AgentRuntimeCallbacks,
     attachments?: CodeAttachment[]
@@ -314,7 +313,7 @@ export class AgentRuntime {
 
   private buildPromptWithContext(
     prompt: string,
-    editorContext: any,
+    editorContext: MonacoEditorContext | null,
     attachments?: CodeAttachment[]
   ): string {
     let result = prompt;
@@ -451,9 +450,9 @@ ${prompt}
       const duration = Date.now() - startTime;
       eventBus.emit('tool:result', { name: tc.name, success: result.success, output: result.output, error: result.error, duration });
       return { toolCallId: tc.id, name: tc.name, success: result.success, output: result.output, error: result.error };
-    } catch (err: any) {
+    } catch (err: unknown) {
       const duration = Date.now() - startTime;
-      const result = { toolCallId: tc.id, name: tc.name, success: false, output: '', error: err.message || String(err) };
+      const result = { toolCallId: tc.id, name: tc.name, success: false, output: '', error: err instanceof Error ? err.message : String(err) };
       eventBus.emit('tool:result', { name: tc.name, success: false, output: '', error: result.error, duration });
       return result;
     }

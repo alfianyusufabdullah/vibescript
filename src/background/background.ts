@@ -1,5 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import type { ExtensionMessage, Settings } from '../shared/types';
+import type { ExtensionMessage, Settings, AgentMessage, ToolDefinition } from '../shared/types';
 import { providerRegistry } from '../shared/providers';
 import { registerBuiltinTools } from '../shared/tools';
 
@@ -47,7 +46,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   }
 
   if (message.action === 'LLM_REQUEST') {
-    const { provider, apiKey, model, messages, tools } = message.payload;
+    const { provider, apiKey, model, messages, tools } = (message.payload ?? {}) as {
+      provider: string; apiKey: string; model: string; messages: AgentMessage[]; tools: ToolDefinition[];
+    };
 
     try {
       const providerInstance = providerRegistry.get(provider, { apiKey, model });
@@ -72,7 +73,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   }
 
   if (message.action === 'REQUEST_COMPLETION') {
-    const { prefix } = message.payload;
+    const { prefix } = (message.payload ?? {}) as { prefix: string };
     chrome.storage.local.get(['vibescript_settings'], async (result) => {
       const settings = result.vibescript_settings as Settings | undefined;
       if (!settings) {
@@ -90,9 +91,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
       }
 
       try {
-        const completionMessages = [
+        const completionMessages: AgentMessage[] = [
           {
-            role: 'user' as const,
+            role: 'user',
             content: `You are an expert coder. Complete the following code at the end of the text. Do not explain, do not add comments, and do not repeat the code prefix. Return ONLY the code to complete.
 Code prefix:
 ${prefix}`,
@@ -100,7 +101,7 @@ ${prefix}`,
         ];
         const providerInstance = providerRegistry.get(provider, { apiKey, model });
         const response = await providerInstance.generate(
-          { model, messages: completionMessages as any, tools: [] },
+          { model, messages: completionMessages, tools: [] },
           { apiKey, model }
         );
         sendResponse({ suggestion: response.text });
@@ -169,8 +170,8 @@ chrome.runtime.onConnect.addListener((port) => {
               break;
           }
         }
-      } catch (err: any) {
-        port.postMessage({ type: 'error', error: err.message || String(err) });
+      } catch (err: unknown) {
+        port.postMessage({ type: 'error', error: err instanceof Error ? err.message : String(err) });
       }
     }
   });

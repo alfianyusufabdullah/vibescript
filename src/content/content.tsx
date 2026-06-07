@@ -30,18 +30,17 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
 
   if (window === window.top) {
     if (message.action === 'ATTACH_SELECTION') {
+      const { filename, content, text, startLine, endLine } = (message.payload ?? {}) as {
+        filename?: string; content?: string; text?: string; startLine?: number; endLine?: number;
+      };
       useDiagnosticsStore.getState().addLog('[Content] Forwarding ATTACH_SELECTION content to editor store', 'success');
       useEditorStore.getState().addAttachment({
-        filename: message.payload.filename,
-        content: message.payload.content || message.payload.text || '',
-        lineStart: message.payload.startLine,
-        lineEnd: message.payload.endLine
+        filename: filename ?? '',
+        content: content || text || '',
+        lineStart: startLine,
+        lineEnd: endLine,
       });
-      useUiStore.getState().insertMention(
-        message.payload.filename,
-        message.payload.startLine,
-        message.payload.endLine
-      );
+      useUiStore.getState().insertMention(filename ?? '', startLine, endLine);
       useUiStore.getState().setPanelOpen(true);
     } else if (
       message.action === 'CODE_RESULT' ||

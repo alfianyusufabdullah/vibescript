@@ -126,9 +126,7 @@ export function useChatInput({ scriptId, currentContext, textareaRef, agentStatu
 
   const handleSend = useCallback(async () => {
     const { isLoading } = useChatStore.getState();
-    // cancel is extracted here for type-checking but agent cancellation is handled
-    // by the component layer via AgentStore; it is not invoked directly in this hook.
-    const { status, cancel: _cancelAgent } = useAgentStore.getState();
+    const { status } = useAgentStore.getState();
     const isAgentRunning = status === 'thinking' || status === 'executing_tools';
     if (!draftInput.trim() || isLoading || isAgentRunning) {
       return;
@@ -161,7 +159,7 @@ export function useChatInput({ scriptId, currentContext, textareaRef, agentStatu
       provider,
       apiKey,
       model,
-      editorContext: currentContext ? { ...currentContext, scriptId } : null,
+      editorContext: currentContext,
       scriptId: activeScriptId,
       attachments: finalAttachments,
     });

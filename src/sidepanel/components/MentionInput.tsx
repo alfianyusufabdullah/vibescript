@@ -25,7 +25,6 @@ export const MentionInput: React.FC<MentionInputProps> = ({
   const textareaRef = externalRef || localRef;
   const backdropRef = useRef<HTMLDivElement>(null);
 
-  // Sync scroll
   const handleScroll = () => {
     if (textareaRef.current && backdropRef.current) {
       backdropRef.current.scrollTop = textareaRef.current.scrollTop;
@@ -34,8 +33,11 @@ export const MentionInput: React.FC<MentionInputProps> = ({
   };
 
   useEffect(() => {
-    handleScroll();
-  }, [value]);
+    if (textareaRef.current && backdropRef.current) {
+      backdropRef.current.scrollTop = textareaRef.current.scrollTop;
+      backdropRef.current.scrollLeft = textareaRef.current.scrollLeft;
+    }
+  }, [value, textareaRef]);
 
   // Adjust height on text changes
   useEffect(() => {

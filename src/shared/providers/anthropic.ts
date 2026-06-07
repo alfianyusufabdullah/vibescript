@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Provider, ProviderConfig, GenerateRequest, StreamRequest, GenerateResponse } from './types';
 import type { ProviderEvent, ToolCall, AgentMessage, ToolDefinition } from '../types';
 
@@ -6,6 +5,45 @@ const ANTHROPIC_API_VERSION = '2023-06-01';
 const DEFAULT_MAX_TOKENS = 4096;
 const PERMANENT_HTTP_ERROR_CODES = [400, 401, 403, 404];
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
+
+interface AnthropicContentBlock {
+  type: string;
+  text?: string;
+  thinking?: string;
+  id?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+}
+
+interface AnthropicResponse {
+  content: AnthropicContentBlock[];
+  stop_reason: string;
+  usage?: { input_tokens?: number; output_tokens?: number };
+}
+
+interface AnthropicStreamEvent {
+  type: string;
+  content_block?: AnthropicContentBlock;
+  delta?: {
+    type: string;
+    text?: string;
+    thinking?: string;
+    partial_json?: string;
+    stop_reason?: string;
+  };
+  usage?: { output_tokens?: number };
+  message?: { usage?: { input_tokens?: number } };
+}
+
+type AnthropicMessageContent =
+  | { type: 'text'; text: string }
+  | { type: 'tool_result'; tool_use_id: string | undefined; content: string }
+  | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> };
+
+interface AnthropicMessage {
+  role: string;
+  content: string | AnthropicMessageContent[];
+}
 
 function toAnthropicTools(tools: ToolDefinition[]): Record<string, unknown>[] {
   return tools.map((t) => ({
@@ -98,19 +136,20 @@ export class AnthropicProvider implements Provider {
         const jsonStr = trimmed.slice(6);
         if (jsonStr === '[DONE]') continue;
         try {
-          const rawEvent = JSON.parse(jsonStr) as any;
+          const rawEvent = JSON.parse(jsonStr) as AnthropicStreamEvent;
           const eventType = rawEvent.type as string;
 
           switch (eventType) {
             case 'content_block_start': {
               const block = rawEvent.content_block;
+              if (!block) break;
               if (block.type === 'thinking') {
                 inThinkingBlock = true;
               } else if (block.type === 'text') {
                 inThinkingBlock = false;
               } else if (block.type === 'tool_use') {
                 inThinkingBlock = false;
-                yield { type: 'tool_call_start', index: toolCallIndex, id: block.id, name: block.name };
+                yield { type: 'tool_call_start', index: toolCallIndex, id: block.id ?? '', name: block.name ?? '' };
                 currentToolCall = {
                   id: block.id,
                   name: block.name,
@@ -123,15 +162,16 @@ export class AnthropicProvider implements Provider {
             }
             case 'content_block_delta': {
               const delta = rawEvent.delta;
+              if (!delta) break;
               if (delta.type === 'thinking_delta' && delta.thinking) {
                 yield { type: 'reasoning_delta', delta: delta.thinking };
               } else if (delta.type === 'text_delta') {
-                accumulatedText += delta.text;
-                yield { type: 'text_delta', delta: delta.text };
+                accumulatedText += delta.text ?? '';
+                yield { type: 'text_delta', delta: delta.text ?? '' };
               } else if (delta.type === 'input_json_delta') {
                 if (currentToolCall) {
-                  currentToolCall.arguments += delta.partial_json;
-                  yield { type: 'tool_call_delta', index: currentToolCall.index, delta: delta.partial_json };
+                  currentToolCall.arguments += delta.partial_json ?? '';
+                  yield { type: 'tool_call_delta', index: currentToolCall.index, delta: delta.partial_json ?? '' };
                 }
               }
               break;
@@ -216,18 +256,18 @@ export class AnthropicProvider implements Provider {
     });
   }
 
-  private parseResponse(data: any): GenerateResponse {
+  private parseResponse(data: AnthropicResponse): GenerateResponse {
     const content = data.content || [];
-    const text = content.find((b: any) => b.type === 'text')?.text || '';
-    const toolUseBlocks = content.filter((b: any) => b.type === 'tool_use');
+    const text = content.find((b) => b.type === 'text')?.text || '';
+    const toolUseBlocks = content.filter((b) => b.type === 'tool_use');
     const stopReason = data.stop_reason || 'end_turn';
     const raw = data.usage;
 
     return {
       text,
-      toolCalls: toolUseBlocks.map((tb: any) => ({
-        id: tb.id,
-        name: tb.name,
+      toolCalls: toolUseBlocks.map((tb) => ({
+        id: tb.id || '',
+        name: tb.name || '',
         arguments: tb.input || {},
       })),
       finishReason:
@@ -245,8 +285,8 @@ export class AnthropicProvider implements Provider {
     };
   }
 
-  private toAnthropicMessages(messages: AgentMessage[]): any[] {
-    const result: any[] = [];
+  private toAnthropicMessages(messages: AgentMessage[]): AnthropicMessage[] {
+    const result: AnthropicMessage[] = [];
     for (const msg of messages) {
       if (msg.role === 'system') continue;
       if (msg.role === 'tool') {
@@ -255,7 +295,7 @@ export class AnthropicProvider implements Provider {
           content: [{ type: 'tool_result', tool_use_id: msg.tool_call_id, content: msg.content }],
         });
       } else if (msg.role === 'assistant') {
-        const content: any[] = [];
+        const content: AnthropicMessageContent[] = [];
         if (msg.content) content.push({ type: 'text', text: msg.content });
         if (msg.tool_calls) {
           for (const tc of msg.tool_calls) {

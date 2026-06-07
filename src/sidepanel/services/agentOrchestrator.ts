@@ -1,5 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import type { AgentRole, Provider, CodeAttachment, AgentStep, TokenUsage } from '../../shared/types';
+import type { AgentRole, Provider, CodeAttachment, AgentStep, TokenUsage, MonacoEditorContext } from '../../shared/types';
 import { AgentRuntime } from './agentRuntime';
 import type { AgentRuntimeCallbacks } from './agentRuntime';
 
@@ -17,7 +16,7 @@ export interface SubAgentTask {
   provider: Provider;
   apiKey: string;
   model: string;
-  editorContext: any;
+  editorContext: MonacoEditorContext | null;
   scriptId: string;
   outputSchema?: Record<string, unknown>;
 }
@@ -78,7 +77,7 @@ export class AgentOrchestrator {
     provider: Provider,
     apiKey: string,
     model: string,
-    editorContext: any,
+    editorContext: MonacoEditorContext | null,
     scriptId: string,
     callbacks: AgentRuntimeCallbacks,
     attachments?: CodeAttachment[]
@@ -99,7 +98,7 @@ export class AgentOrchestrator {
     provider: Provider,
     apiKey: string,
     model: string,
-    editorContext: any,
+    editorContext: MonacoEditorContext | null,
     scriptId: string,
     outputSchema?: Record<string, unknown>
   ): Promise<SubAgentResult> {

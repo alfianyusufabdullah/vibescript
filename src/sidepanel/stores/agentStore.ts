@@ -1,6 +1,5 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { create } from 'zustand';
-import type { AgentStatus, AgentStep, Provider, CodeAttachment, AgentRole } from '../../shared/types';
+import type { AgentStatus, AgentStep, Provider, CodeAttachment, AgentRole, MonacoEditorContext } from '../../shared/types';
 import { registerBuiltinTools } from '../../shared/tools';
 
 let toolsRegistered = false;
@@ -20,7 +19,7 @@ interface ContextInfo {
   provider: Provider;
   apiKey: string;
   model: string;
-  editorContext: any;
+  editorContext: MonacoEditorContext | null;
   scriptId: string;
   attachments?: CodeAttachment[];
 }
@@ -72,7 +71,7 @@ export const useAgentStore = create<AgentState>((set) => ({
 
     // Try to set up session; errors must not prevent the agent from running
     try {
-      const scriptLabel = editorContext?.scriptId || 'global';
+      const scriptLabel = scriptId || 'global';
       const existingSessions = await sessionManager.listSessions(scriptLabel);
       const currentSessionId = sessionManager.getCurrentSessionId();
       const currentSession = currentSessionId
