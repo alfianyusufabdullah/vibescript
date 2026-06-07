@@ -1,12 +1,25 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Provider, ProviderConfig, GenerateRequest, StreamRequest, GenerateResponse } from './types';
-import type { ProviderEvent, ToolCall, AgentMessage } from '../types';
+import type { ProviderEvent, ToolCall, AgentMessage, ToolDefinition } from '../types';
+
+const DEFAULT_TEMPERATURE = 0.3;
+const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
+const THINKING_BUDGET = 8192;
+const PERMANENT_HTTP_ERROR_CODES = [400, 401, 403, 404];
+
+function toGeminiFunctionDeclarations(tools: ToolDefinition[]): Record<string, unknown>[] {
+  return tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    parameters: t.parameters,
+  }));
+}
 
 export class GeminiProvider implements Provider {
   readonly name = 'gemini';
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  constructor(_config?: ProviderConfig) {}
+  constructor(_config?: ProviderConfig) { }
 
   async generate(req: GenerateRequest, config: ProviderConfig): Promise<GenerateResponse> {
     const url = this.buildUrl(config.model, config.apiKey);
@@ -15,17 +28,14 @@ export class GeminiProvider implements Provider {
     const payload: Record<string, unknown> = {
       contents: this.toGeminiContents(req.messages),
       systemInstruction: { parts: [{ text: systemMsg?.content || '' }] },
-      generationConfig: { temperature: config.temperature ?? 0.3, maxOutputTokens: config.maxTokens ?? 8192 },
+      generationConfig: {
+        temperature: config.temperature ?? DEFAULT_TEMPERATURE,
+        maxOutputTokens: config.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+      },
     };
 
     if (req.tools && req.tools.length > 0) {
-      payload.tools = [{
-        functionDeclarations: req.tools.map((t) => ({
-          name: t.name,
-          description: t.description,
-          parameters: t.parameters,
-        })),
-      }];
+      payload.tools = [{ functionDeclarations: toGeminiFunctionDeclarations(req.tools) }];
     }
 
     const response = await fetch(url, {
@@ -51,13 +61,15 @@ export class GeminiProvider implements Provider {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:streamGenerateContent?alt=sse&key=${config.apiKey}`;
     const systemMsg = req.messages.find((m) => m.role === 'system');
 
+    const hasTools = req.tools && req.tools.length > 0;
+
     const generationConfig: Record<string, unknown> = {
-      temperature: config.temperature ?? 0.3,
-      maxOutputTokens: config.maxTokens ?? 8192,
+      temperature: config.temperature ?? DEFAULT_TEMPERATURE,
+      maxOutputTokens: config.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     };
 
     if (this.isThinkingCapable(config.model)) {
-      generationConfig.thinkingConfig = { includeThoughts: true };
+      generationConfig.thinkingConfig = { includeThoughts: true, thinkingBudget: THINKING_BUDGET };
     }
 
     const payload: Record<string, unknown> = {
@@ -66,14 +78,8 @@ export class GeminiProvider implements Provider {
       generationConfig,
     };
 
-    if (req.tools && req.tools.length > 0) {
-      payload.tools = [{
-        functionDeclarations: req.tools.map((t) => ({
-          name: t.name,
-          description: t.description,
-          parameters: t.parameters,
-        })),
-      }];
+    if (hasTools) {
+      payload.tools = [{ functionDeclarations: toGeminiFunctionDeclarations(req.tools!) }];
     }
 
     const response = await fetch(url, {
@@ -84,7 +90,7 @@ export class GeminiProvider implements Provider {
 
     if (!response.ok) {
       const errorText = await response.text();
-      const isPermanent = /\b(400|401|403|404)\b/.test(String(response.status));
+      const isPermanent = PERMANENT_HTTP_ERROR_CODES.includes(response.status);
       yield { type: 'error', error: `Gemini API Error: ${response.status} - ${errorText}`, retriable: !isPermanent };
       return;
     }
@@ -94,7 +100,7 @@ export class GeminiProvider implements Provider {
     let buffer = '';
     let accumulatedText = '';
     const toolCalls: ToolCall[] = [];
-    let fcIndex = 0;
+    let functionCallIndex = 0;
     let usage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
 
     while (true) {
@@ -122,7 +128,7 @@ export class GeminiProvider implements Provider {
             if (part.functionCall) {
               const fc = part.functionCall;
               toolCalls.push({
-                id: `fc_${fcIndex++}`,
+                id: `fc_${functionCallIndex++}`,
                 name: fc.name,
                 arguments: fc.args || {},
               });
@@ -165,7 +171,11 @@ export class GeminiProvider implements Provider {
         name: fc.functionCall.name,
         arguments: fc.functionCall.args || {},
       })),
-      finishReason: functionCalls.length > 0 ? 'tool_calls' : candidate?.finishReason === 'STOP' ? 'stop' : candidate?.finishReason === 'MAX_TOKENS' ? 'length' : 'error',
+      finishReason:
+        functionCalls.length > 0 ? 'tool_calls' :
+        candidate?.finishReason === 'STOP' ? 'stop' :
+        candidate?.finishReason === 'MAX_TOKENS' ? 'length' :
+        'error',
       usage: raw
         ? {
             promptTokens: raw.promptTokenCount ?? 0,
