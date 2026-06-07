@@ -1,6 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Provider, ProviderConfig, GenerateRequest, StreamRequest, GenerateResponse } from './types';
-import type { ProviderEvent, ToolCall, AgentMessage } from '../types';
+import type { ProviderEvent, ToolCall, AgentMessage, ToolDefinition } from '../types';
+
+const DEFAULT_TEMPERATURE = 0.3;
+const PERMANENT_HTTP_ERROR_CODES = [400, 401, 403, 404];
+
+function toOpenAITools(tools: ToolDefinition[]): Record<string, unknown>[] {
+  return tools.map((t) => ({
+    type: 'function' as const,
+    function: { name: t.name, description: t.description, parameters: t.parameters },
+  }));
+}
 
 export class OpenAIProvider implements Provider {
   readonly name = 'openai';
@@ -30,16 +40,13 @@ export class OpenAIProvider implements Provider {
         ...(systemMsg ? [] : [{ role: 'system' as const, content: '' }]),
         ...req.messages.map((m) => this.toMessagePayload(m)).filter(Boolean),
       ],
-      temperature: config.temperature ?? 0.3,
+      temperature: config.temperature ?? DEFAULT_TEMPERATURE,
       stream: true,
       stream_options: { include_usage: true },
     };
 
     if (req.tools && req.tools.length > 0) {
-      payload.tools = req.tools.map((t) => ({
-        type: 'function' as const,
-        function: { name: t.name, description: t.description, parameters: t.parameters },
-      }));
+      payload.tools = toOpenAITools(req.tools);
     }
 
     const response = await fetch(url, {
@@ -53,7 +60,7 @@ export class OpenAIProvider implements Provider {
 
     if (!response.ok) {
       const errorText = await response.text();
-      const isPermanent = /\b(400|401|403|404)\b/.test(String(response.status));
+      const isPermanent = PERMANENT_HTTP_ERROR_CODES.includes(response.status);
       yield { type: 'error', error: `OpenAI API Error: ${response.status} - ${errorText}`, retriable: !isPermanent };
       return;
     }
@@ -62,7 +69,7 @@ export class OpenAIProvider implements Provider {
     const decoder = new TextDecoder();
     let buffer = '';
     let accumulatedText = '';
-    const toolAcc: Record<number, { id?: string; name?: string; arguments: string }> = {};
+    const accumulatedToolCalls: Record<number, { id?: string; name?: string; arguments: string }> = {};
     let usage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
 
     while (true) {
@@ -87,10 +94,18 @@ export class OpenAIProvider implements Provider {
           if (delta?.tool_calls) {
             for (const tc of delta.tool_calls) {
               const idx = tc.index as number;
-              if (!toolAcc[idx]) toolAcc[idx] = { arguments: '' };
-              if (tc.id) toolAcc[idx].id = tc.id;
-              if (tc.function?.name) toolAcc[idx].name = tc.function.name;
-              if (tc.function?.arguments) toolAcc[idx].arguments += tc.function.arguments;
+              if (!accumulatedToolCalls[idx]) {
+                accumulatedToolCalls[idx] = { arguments: '' };
+              }
+              if (tc.id) {
+                accumulatedToolCalls[idx].id = tc.id;
+              }
+              if (tc.function?.name) {
+                accumulatedToolCalls[idx].name = tc.function.name;
+              }
+              if (tc.function?.arguments) {
+                accumulatedToolCalls[idx].arguments += tc.function.arguments;
+              }
             }
           }
           if (parsed.usage) {
@@ -107,7 +122,7 @@ export class OpenAIProvider implements Provider {
       }
     }
 
-    const toolCalls: ToolCall[] = Object.values(toolAcc)
+    const toolCalls: ToolCall[] = Object.values(accumulatedToolCalls)
       .filter((tc) => tc.name)
       .map((tc) => ({
         id: tc.id || '',
@@ -135,14 +150,11 @@ export class OpenAIProvider implements Provider {
         ...(systemMsg ? [] : [{ role: 'system' as const, content: '' }]),
         ...req.messages.map((m) => this.toMessagePayload(m)).filter(Boolean),
       ],
-      temperature: config.temperature ?? 0.3,
+      temperature: config.temperature ?? DEFAULT_TEMPERATURE,
     };
 
     if (req.tools && req.tools.length > 0) {
-      payload.tools = req.tools.map((t) => ({
-        type: 'function' as const,
-        function: { name: t.name, description: t.description, parameters: t.parameters },
-      }));
+      payload.tools = toOpenAITools(req.tools);
     }
 
     return fetch(url, {
