@@ -1,5 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 
+const MAX_INPUT_HEIGHT_PX = 120;
+
 interface MentionInputProps {
   value: string;
   onChange: (value: string) => void;
@@ -17,7 +19,7 @@ export const MentionInput: React.FC<MentionInputProps> = ({
   placeholder,
   disabled,
   className = '',
-  textareaRef: externalRef
+  textareaRef: externalRef,
 }) => {
   const localRef = useRef<HTMLTextAreaElement>(null);
   const textareaRef = externalRef || localRef;
@@ -39,7 +41,7 @@ export const MentionInput: React.FC<MentionInputProps> = ({
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`;
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, MAX_INPUT_HEIGHT_PX)}px`;
     }
   }, [value, textareaRef]);
 
@@ -77,7 +79,7 @@ export const MentionInput: React.FC<MentionInputProps> = ({
           }}
         >
           {match[0]}
-        </span>
+        </span>,
       );
 
       lastIndex = matchIndex + matchLength;
@@ -100,7 +102,7 @@ export const MentionInput: React.FC<MentionInputProps> = ({
       {/* Backdrop for highlights - text is transparent so it doesn't double-render, only backgrounds show */}
       <div
         ref={backdropRef}
-        className="absolute inset-x-0 bottom-0 top-0 pointer-events-none whitespace-pre-wrap break-words overflow-hidden text-xs leading-relaxed text-transparent pr-9 py-0.5 max-h-[120px]"
+        className={`absolute inset-x-0 bottom-0 top-0 pointer-events-none whitespace-pre-wrap break-words overflow-hidden text-xs leading-relaxed text-transparent pr-9 py-0.5 max-h-[${MAX_INPUT_HEIGHT_PX}px]`}
         style={{
           boxSizing: 'border-box',
           fontFamily: 'inherit',
@@ -123,7 +125,7 @@ export const MentionInput: React.FC<MentionInputProps> = ({
         onKeyDown={onKeyDown}
         placeholder={placeholder}
         disabled={disabled}
-        className={`${className} relative w-full bg-transparent border-0 outline-none resize-none leading-relaxed pr-9 py-0.5 max-h-[120px] focus:ring-0 focus:outline-none`}
+        className={`${className} relative w-full bg-transparent border-0 outline-none resize-none leading-relaxed pr-9 py-0.5 max-h-[${MAX_INPUT_HEIGHT_PX}px] focus:ring-0 focus:outline-none`}
         style={{
           boxSizing: 'border-box',
           color: 'inherit', // Normal visible text color
