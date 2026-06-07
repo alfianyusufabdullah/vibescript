@@ -8,10 +8,40 @@ interface ToolExecutionLogProps {
   steps: AgentStep[];
 }
 
+interface ToolStatusStyles {
+  borderColor: string;
+  bgColor: string;
+  statusColor: string;
+}
+
+function getToolStatusStyles(isComplete: boolean, success?: boolean): ToolStatusStyles {
+  if (!isComplete) {
+    return {
+      borderColor: 'border-zinc-200',
+      bgColor: 'bg-zinc-50',
+      statusColor: 'text-amber-600',
+    };
+  }
+  if (success) {
+    return {
+      borderColor: 'border-emerald-200',
+      bgColor: 'bg-emerald-50',
+      statusColor: 'text-emerald-700',
+    };
+  }
+  return {
+    borderColor: 'border-red-200',
+    bgColor: 'bg-red-50',
+    statusColor: 'text-red-600',
+  };
+}
+
 export const ToolExecutionLog: React.FC<ToolExecutionLogProps> = ({ steps }) => {
   const pairedSteps = useMemo(() => pairSteps(steps), [steps]);
 
-  if (pairedSteps.length === 0) return null;
+  if (pairedSteps.length === 0) {
+    return null;
+  }
 
   return (
     <div className="flex flex-col gap-1.5 animate-fade-in">
@@ -37,7 +67,7 @@ const StepItem: React.FC<{ step: PairedStep; isLatest: boolean }> = ({ step, isL
   return (
     <div className="animate-fade-in">
       {step.toolCalls.map((tc, i) => {
-        const result = step.toolResults.find(r => r.name === tc.name) || step.toolResults[i];
+        const result = step.toolResults.find((r) => r.name === tc.name) || step.toolResults[i];
         return (
           <CombinedToolItem
             key={i}
@@ -61,21 +91,8 @@ export const CombinedToolItem: React.FC<{
   onToggle: () => void;
 }> = ({ toolCall, toolResult, isComplete, expanded, onToggle }) => {
   const success = toolResult?.success;
-  const statusLabel = isComplete
-    ? (success ? 'done' : 'failed')
-    : 'running';
-
-  const borderColor = isComplete
-    ? (success ? 'border-emerald-200' : 'border-red-200')
-    : 'border-zinc-200';
-
-  const bgColor = isComplete
-    ? (success ? 'bg-emerald-50' : 'bg-red-50')
-    : 'bg-zinc-50';
-
-  const statusColor = isComplete
-    ? (success ? 'text-emerald-700' : 'text-red-600')
-    : 'text-amber-600';
+  const statusLabel = isComplete ? (success ? 'done' : 'failed') : 'running';
+  const { borderColor, bgColor, statusColor } = getToolStatusStyles(isComplete, success);
 
   return (
     <div className={`border rounded-md overflow-hidden text-[11px] ${borderColor} ${bgColor}`}>
