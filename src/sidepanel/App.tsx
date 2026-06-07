@@ -12,13 +12,11 @@ export const App: React.FC = () => {
   const { scriptId, detectActiveTab, fetchContext } = useEditorStore();
   const { loadHistory } = useChatStore();
 
-  // Load configuration and UI state on startup
   useEffect(() => {
     loadSettings();
     loadUiState();
   }, [loadSettings, loadUiState]);
 
-  // Sync tab context
   useEffect(() => {
     const init = async () => {
       await detectActiveTab();
@@ -27,13 +25,13 @@ export const App: React.FC = () => {
 
     if (settingsInitialized && uiInitialized) {
       init();
-      // Listen for window focus to refresh editor context
       window.addEventListener('focus', init);
-      return () => window.removeEventListener('focus', init);
+      return () => {
+        window.removeEventListener('focus', init);
+      };
     }
   }, [settingsInitialized, uiInitialized, detectActiveTab, fetchContext]);
 
-  // Load chat history when scriptId is resolved
   useEffect(() => {
     if (settingsInitialized && scriptId) {
       loadHistory(scriptId);

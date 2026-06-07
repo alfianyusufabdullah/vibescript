@@ -12,11 +12,9 @@ export function preprocessStreamingMarkdown(text: string, showCursor: boolean = 
     processed += '▋';
   }
 
-  // Count occurrences of triple backticks
   const matches = processed.match(/```/g);
   const count = matches ? matches.length : 0;
 
-  // If the count is odd, there is an unclosed code block
   if (count % 2 !== 0) {
     return processed + '\n```';
   }
