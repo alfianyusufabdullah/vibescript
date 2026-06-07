@@ -1,5 +1,6 @@
 import type { AgentSession, ChatMessage, AgentStep, TokenUsage } from '../../shared/types';
 import { eventBus } from '../../shared/eventBus';
+import { generateId } from '@/lib/utils';
 
 const SESSION_PREFIX = 'vibescript_session_';
 const SESSION_INDEX_SUFFIX = '_index';
@@ -14,7 +15,7 @@ export class SessionManager {
     agentRole: string
   ): Promise<AgentSession> {
     const session: AgentSession = {
-      id: this.generateId(),
+      id: this.generateSessionId(),
       scriptId,
       label,
       status: 'active',
@@ -68,7 +69,9 @@ export class SessionManager {
 
   async listSessions(scriptId: string): Promise<AgentSession[]> {
     const ids = await this.getSessionIndex(scriptId);
-    if (ids.length === 0) return [];
+    if (ids.length === 0) {
+      return [];
+    }
 
     const keys = ids.map((id) => `${SESSION_PREFIX}${scriptId}_${id}`);
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
@@ -76,7 +79,9 @@ export class SessionManager {
       const sessions: AgentSession[] = [];
       for (const id of ids) {
         const session = result[`${SESSION_PREFIX}${scriptId}_${id}`] as AgentSession | undefined;
-        if (session) sessions.push(session);
+        if (session) {
+          sessions.push(session);
+        }
       }
       return sessions.sort((a, b) => b.updatedAt - a.updatedAt);
     }
@@ -107,7 +112,8 @@ export class SessionManager {
   async deactivateOtherSessions(scriptId: string, activeSessionId: string): Promise<void> {
     const all = await this.listSessions(scriptId);
     for (const sess of all) {
-      if (sess.id !== activeSessionId && sess.status === 'active') {
+      const isOtherActiveSession = sess.id !== activeSessionId && sess.status === 'active';
+      if (isOtherActiveSession) {
         sess.status = 'paused';
         await this.saveSession(sess);
       }
@@ -124,7 +130,8 @@ export class SessionManager {
 
   async startNewSession(scriptId: string, roleId: string): Promise<AgentSession> {
     const existing = await this.listSessions(scriptId);
-    const session = await this.createSession(scriptId, `Session ${existing.length + 1}`, roleId);
+    const sessionLabel = `Session ${existing.length + 1}`;
+    const session = await this.createSession(scriptId, sessionLabel, roleId);
     return session;
   }
 
@@ -172,8 +179,8 @@ export class SessionManager {
     }
   }
 
-  private generateId(): string {
-    return `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  private generateSessionId(): string {
+    return generateId();
   }
 }
 
