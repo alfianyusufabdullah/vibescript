@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+const DEFAULT_PANEL_WIDTH_PX = 380;
+
 interface UiState {
   initialized: boolean;
   isPanelOpen: boolean;
@@ -28,7 +30,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   isPanelOpen: false,
   activeTab: 'chat',
   draftInput: '',
-  panelWidth: 380,
+  panelWidth: DEFAULT_PANEL_WIDTH_PX,
 
   setPanelOpen: (isOpen) => {
     set({ isPanelOpen: isOpen });
@@ -63,7 +65,7 @@ export const useUiStore = create<UiState>((set, get) => ({
       ? `@${filename}:${lineStart}`
       : `@${filename}`;
     const space = draftInput && !draftInput.endsWith(' ') ? ' ' : '';
-    const newText = draftInput + space + mention + ' ';
+    const newText = `${draftInput}${space}${mention} `;
     set({ draftInput: newText });
     saveUiState(get());
   },
@@ -78,7 +80,7 @@ export const useUiStore = create<UiState>((set, get) => ({
               isPanelOpen: saved.isPanelOpen ?? false,
               activeTab: saved.activeTab ?? 'chat',
               draftInput: saved.draftInput ?? '',
-              panelWidth: saved.panelWidth ?? 380,
+              panelWidth: saved.panelWidth ?? DEFAULT_PANEL_WIDTH_PX,
               initialized: true
             });
           } else {
@@ -105,4 +107,3 @@ function saveUiState(state: UiState) {
     });
   }
 }
-
