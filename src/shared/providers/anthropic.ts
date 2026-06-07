@@ -1,13 +1,25 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Provider, ProviderConfig, GenerateRequest, StreamRequest, GenerateResponse } from './types';
-import type { ProviderEvent, ToolCall, AgentMessage } from '../types';
+import type { ProviderEvent, ToolCall, AgentMessage, ToolDefinition } from '../types';
+
+const ANTHROPIC_API_VERSION = '2023-06-01';
+const DEFAULT_MAX_TOKENS = 4096;
+const PERMANENT_HTTP_ERROR_CODES = [400, 401, 403, 404];
+const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
+
+function toAnthropicTools(tools: ToolDefinition[]): Record<string, unknown>[] {
+  return tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    input_schema: t.parameters,
+  }));
+}
 
 export class AnthropicProvider implements Provider {
   readonly name = 'anthropic';
-  private apiVersion = '2023-06-01';
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  constructor(_config?: ProviderConfig) {}
+  constructor(_config?: ProviderConfig) { }
 
   async generate(req: GenerateRequest, config: ProviderConfig): Promise<GenerateResponse> {
     const response = await this.fetchCompletion(req, config);
@@ -24,9 +36,8 @@ export class AnthropicProvider implements Provider {
   }
 
   async *stream(req: StreamRequest, config: ProviderConfig): AsyncGenerator<ProviderEvent> {
-    const url = 'https://api.anthropic.com/v1/messages';
     const systemMsg = req.messages.find((m) => m.role === 'system');
-    const maxTokens = config.maxTokens ?? 4096;
+    const maxTokens = config.maxTokens ?? DEFAULT_MAX_TOKENS;
 
     const payload: Record<string, unknown> = {
       model: config.model,
@@ -41,19 +52,15 @@ export class AnthropicProvider implements Provider {
     }
 
     if (req.tools && req.tools.length > 0) {
-      payload.tools = req.tools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        input_schema: t.parameters,
-      }));
+      payload.tools = toAnthropicTools(req.tools);
     }
 
-    const response = await fetch(url, {
+    const response = await fetch(ANTHROPIC_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': config.apiKey,
-        'anthropic-version': this.apiVersion,
+        'anthropic-version': ANTHROPIC_API_VERSION,
         'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify(payload),
@@ -61,7 +68,7 @@ export class AnthropicProvider implements Provider {
 
     if (!response.ok) {
       const errorText = await response.text();
-      const isPermanent = /\b(400|401|403|404)\b/.test(String(response.status));
+      const isPermanent = PERMANENT_HTTP_ERROR_CODES.includes(response.status);
       yield { type: 'error', error: `Anthropic API Error: ${response.status} - ${errorText}`, retriable: !isPermanent };
       return;
     }
@@ -91,12 +98,12 @@ export class AnthropicProvider implements Provider {
         const jsonStr = trimmed.slice(6);
         if (jsonStr === '[DONE]') continue;
         try {
-          const event = JSON.parse(jsonStr) as any;
-          const eventType = event.type as string;
+          const rawEvent = JSON.parse(jsonStr) as any;
+          const eventType = rawEvent.type as string;
 
           switch (eventType) {
             case 'content_block_start': {
-              const block = event.content_block;
+              const block = rawEvent.content_block;
               if (block.type === 'thinking') {
                 inThinkingBlock = true;
               } else if (block.type === 'text') {
@@ -104,13 +111,18 @@ export class AnthropicProvider implements Provider {
               } else if (block.type === 'tool_use') {
                 inThinkingBlock = false;
                 yield { type: 'tool_call_start', index: toolCallIndex, id: block.id, name: block.name };
-                currentToolCall = { id: block.id, name: block.name, arguments: block.input ? JSON.stringify(block.input) : '', index: toolCallIndex };
+                currentToolCall = {
+                  id: block.id,
+                  name: block.name,
+                  arguments: block.input ? JSON.stringify(block.input) : '',
+                  index: toolCallIndex,
+                };
                 toolCallIndex++;
               }
               break;
             }
             case 'content_block_delta': {
-              const delta = event.delta;
+              const delta = rawEvent.delta;
               if (delta.type === 'thinking_delta' && delta.thinking) {
                 yield { type: 'reasoning_delta', delta: delta.thinking };
               } else if (delta.type === 'text_delta') {
@@ -150,17 +162,17 @@ export class AnthropicProvider implements Provider {
               break;
             }
             case 'message_delta': {
-              if (event.usage) {
-                outputTokens = event.usage.output_tokens ?? 0;
+              if (rawEvent.usage) {
+                outputTokens = rawEvent.usage.output_tokens ?? 0;
               }
-              if (event.delta?.stop_reason === 'end_turn' || event.delta?.stop_reason === 'stop') {
+              if (rawEvent.delta?.stop_reason === 'end_turn' || rawEvent.delta?.stop_reason === 'stop') {
                 // message completed
               }
               break;
             }
             case 'message_start': {
-              if (event.message?.usage) {
-                inputTokens = event.message.usage.input_tokens ?? 0;
+              if (rawEvent.message?.usage) {
+                inputTokens = rawEvent.message.usage.input_tokens ?? 0;
               }
               break;
             }
@@ -178,9 +190,8 @@ export class AnthropicProvider implements Provider {
   }
 
   private async fetchCompletion(req: GenerateRequest, config: ProviderConfig): Promise<Response> {
-    const url = 'https://api.anthropic.com/v1/messages';
     const systemMsg = req.messages.find((m) => m.role === 'system');
-    const maxTokens = config.maxTokens ?? 4096;
+    const maxTokens = config.maxTokens ?? DEFAULT_MAX_TOKENS;
 
     const payload: Record<string, unknown> = {
       model: config.model,
@@ -190,19 +201,15 @@ export class AnthropicProvider implements Provider {
     };
 
     if (req.tools && req.tools.length > 0) {
-      payload.tools = req.tools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        input_schema: t.parameters,
-      }));
+      payload.tools = toAnthropicTools(req.tools);
     }
 
-    return fetch(url, {
+    return fetch(ANTHROPIC_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': config.apiKey,
-        'anthropic-version': this.apiVersion,
+        'anthropic-version': ANTHROPIC_API_VERSION,
         'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify(payload),
@@ -223,7 +230,11 @@ export class AnthropicProvider implements Provider {
         name: tb.name,
         arguments: tb.input || {},
       })),
-      finishReason: stopReason === 'tool_use' ? 'tool_calls' : stopReason === 'end_turn' ? 'stop' : stopReason === 'max_tokens' ? 'length' : 'error',
+      finishReason:
+        stopReason === 'tool_use' ? 'tool_calls' :
+        stopReason === 'end_turn' ? 'stop' :
+        stopReason === 'max_tokens' ? 'length' :
+        'error',
       usage: raw
         ? {
             promptTokens: raw.input_tokens ?? 0,
