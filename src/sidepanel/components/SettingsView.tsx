@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useSettingsStore } from '../stores/settingsStore';
-import { useDiagnosticsStore } from '../stores/diagnosticsStore';
 import { PROVIDERS } from '../../shared/constants';
 import type { Provider } from '../../shared/types';
 import { Key, Settings as SettingsIcon, ShieldAlert, Check, Eye, EyeOff } from 'lucide-react';
@@ -8,33 +7,33 @@ import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Button } from './ui/button';
+import { DiagnosticsPanel } from './DiagnosticsPanel';
 
 export const SettingsView: React.FC = () => {
   const { provider, apiKeys, models, setProvider, setApiKey, setModel } = useSettingsStore();
   const [showDiagnostics, setShowDiagnostics] = useState(false);
-  const { logs, clearLogs } = useDiagnosticsStore();
   const [showKeys, setShowKeys] = useState<Record<Provider, boolean>>({
     gemini: false,
     openai: false,
     anthropic: false,
-    deepseek: false
+    deepseek: false,
   });
   const [saveStatus, setSaveStatus] = useState<Record<Provider, boolean>>({
     gemini: false,
     openai: false,
     anthropic: false,
-    deepseek: false
+    deepseek: false,
   });
 
   const toggleKeyVisibility = (p: Provider) => {
-    setShowKeys(prev => ({ ...prev, [p]: !prev[p] }));
+    setShowKeys((prev) => ({ ...prev, [p]: !prev[p] }));
   };
 
   const handleKeyChange = (p: Provider, val: string) => {
     setApiKey(p, val);
-    setSaveStatus(prev => ({ ...prev, [p]: true }));
+    setSaveStatus((prev) => ({ ...prev, [p]: true }));
     setTimeout(() => {
-      setSaveStatus(prev => ({ ...prev, [p]: false }));
+      setSaveStatus((prev) => ({ ...prev, [p]: false }));
     }, 1500);
   };
 
@@ -64,19 +63,21 @@ export const SettingsView: React.FC = () => {
         <div className="grid grid-cols-2 gap-2">
           {(Object.keys(PROVIDERS) as Provider[]).map((p) => {
             const isSelected = provider === p;
+            const providerButtonClassName = isSelected
+              ? 'border-zinc-900 bg-white text-zinc-950'
+              : 'border-zinc-200 bg-white text-zinc-500 hover:border-zinc-300 hover:text-zinc-800';
+            const modelLabelClassName = isSelected ? 'text-zinc-500 font-medium' : 'text-zinc-400';
+            const modelLabel = models[p] ? models[p].split('-').slice(0, 2).join(' ') : 'Default';
+
             return (
               <button
                 key={p}
                 onClick={() => setProvider(p)}
-                className={`flex flex-col items-start p-2.5 rounded-lg border text-left transition-all duration-150 cursor-pointer shadow-sm ${
-                  isSelected
-                    ? 'border-zinc-900 bg-white text-zinc-950'
-                    : 'border-zinc-200 bg-white text-zinc-500 hover:border-zinc-300 hover:text-zinc-800'
-                }`}
+                className={`flex flex-col items-start p-2.5 rounded-lg border text-left transition-all duration-150 cursor-pointer shadow-sm ${providerButtonClassName}`}
               >
                 <span className="text-xs font-medium">{PROVIDERS[p].name}</span>
-                <span className={`text-[9px] mt-0.5 ${isSelected ? 'text-zinc-500 font-medium' : 'text-zinc-400'}`}>
-                  {models[p] ? models[p].split('-').slice(0, 2).join(' ') : 'Default'}
+                <span className={`text-[9px] mt-0.5 ${modelLabelClassName}`}>
+                  {modelLabel}
                 </span>
               </button>
             );
@@ -93,15 +94,14 @@ export const SettingsView: React.FC = () => {
         {(Object.keys(PROVIDERS) as Provider[]).map((p) => {
           const config = PROVIDERS[p];
           const isCurrent = provider === p;
+          const cardClassName = isCurrent
+            ? 'border-zinc-200 bg-white shadow-sm'
+            : 'border-transparent bg-zinc-100/40 opacity-50 hover:opacity-100 hover:border-zinc-200 hover:bg-zinc-100/60';
 
           return (
             <Card
               key={p}
-              className={`transition-all duration-150 ${
-                isCurrent
-                  ? 'border-zinc-200 bg-white shadow-sm'
-                  : 'border-transparent bg-zinc-100/40 opacity-50 hover:opacity-100 hover:border-zinc-200 hover:bg-zinc-100/60'
-              }`}
+              className={`transition-all duration-150 ${cardClassName}`}
             >
               <CardContent className="p-3">
                 <div className="flex items-center justify-between mb-3">
@@ -179,39 +179,7 @@ export const SettingsView: React.FC = () => {
           </span>
         </button>
 
-        {showDiagnostics && (
-          <div className="flex flex-col gap-2 bg-zinc-950 text-zinc-100 p-3 rounded-lg font-mono text-[10px] max-h-60 overflow-y-auto border border-zinc-800">
-            <div className="flex justify-between pb-1 border-b border-zinc-800 mb-1">
-              <span className="text-zinc-500 font-semibold uppercase tracking-wider text-[9px]">Live Extension Logs</span>
-              <button
-                onClick={() => clearLogs()}
-                className="text-zinc-400 hover:text-white transition-colors cursor-pointer uppercase tracking-wider text-[9px]"
-              >
-                Clear
-              </button>
-            </div>
-            {logs.length === 0 ? (
-              <div className="text-zinc-650 italic">No diagnostic events recorded.</div>
-            ) : (
-              logs.map((log, index) => {
-                const color =
-                  log.type === 'error'
-                    ? 'text-rose-400'
-                    : log.type === 'success'
-                    ? 'text-emerald-400'
-                    : log.type === 'warn'
-                    ? 'text-amber-400'
-                    : 'text-zinc-300';
-                return (
-                  <div key={index} className="flex gap-2 leading-relaxed">
-                    <span className="text-zinc-600 select-none">[{log.timestamp}]</span>
-                    <span className={color}>{log.message}</span>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        )}
+        {showDiagnostics && <DiagnosticsPanel />}
       </div>
 
       {/* Footer Branding */}
@@ -221,4 +189,3 @@ export const SettingsView: React.FC = () => {
     </div>
   );
 };
-
