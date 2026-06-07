@@ -130,10 +130,10 @@ ${prefix}`,
       // Forward to editor frame if known, otherwise fallback to main frame
       const target = editorFrameId !== undefined ? editorFrameId : 0;
       chrome.tabs.sendMessage(tabId, message, { frameId: target }).catch((err) => {
-        console.warn('[VibeScript Background] Failed to forward to frame ' + target + ':', err.message);
+        console.warn(`[VibeScript Background] Failed to forward to frame ${target}:`, err.message);
       });
       if (editorFrameId === undefined) {
-        console.warn('[VibeScript Background] Editor frame not registered for tab ' + tabId + ', routing to main frame');
+        console.warn(`[VibeScript Background] Editor frame not registered for tab ${tabId}, routing to main frame`);
       }
     }
   }
