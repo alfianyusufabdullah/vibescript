@@ -1,5 +1,6 @@
 import React from 'react';
 import { useEditorStore } from '../stores/editorStore';
+import { useAgentStore } from '../stores/agentStore';
 import { useChatStore } from '../stores/chatStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { HelpCircle, Wrench, RefreshCw, MessageSquareCode } from 'lucide-react';
@@ -7,13 +8,14 @@ import { Button } from './ui/button';
 
 export const ActionBar: React.FC = () => {
   const { fetchContext } = useEditorStore();
-  const { sendMessage, isLoading } = useChatStore();
+  const { isLoading } = useChatStore();
+  const { run: runAgent, status: agentStatus } = useAgentStore();
   const { provider, apiKeys, models } = useSettingsStore();
 
   const handleAction = async (actionType: 'explain' | 'fix' | 'refactor' | 'comments') => {
-    if (isLoading) return;
+    const isAgentRunning = agentStatus === 'thinking' || agentStatus === 'executing_tools';
+    if (isLoading || isAgentRunning) return;
 
-    // 1. Fetch current editor state
     const context = await fetchContext();
     if (!context) {
       alert('Could not retrieve code from active Apps Script editor. Please make sure you have the Apps Script editor open and focused.');
@@ -24,7 +26,6 @@ export const ActionBar: React.FC = () => {
     const isSelection = !!context.selectedText;
     const scopeText = isSelection ? 'selected text' : 'active file';
 
-    // 2. Formulate prompt based on action
     let prompt = '';
     
     switch (actionType) {
@@ -45,15 +46,15 @@ export const ActionBar: React.FC = () => {
     const apiKey = apiKeys[provider];
     const model = models[provider];
 
-    // 3. Send message to AI
-    sendMessage(prompt, {
+    const scriptId = context.position ? 'current' : 'global';
+    useChatStore.getState().addUserMessage(scriptId, prompt, []);
+    runAgent(prompt, {
       provider,
       apiKey,
       model,
-      editorContext: {
-        ...context,
-        scriptId: context.position ? 'current' : 'global' // pass a dummy identifier to group chat
-      }
+      editorContext: { ...context, scriptId },
+      scriptId,
+      attachments: [],
     });
   };
 
@@ -66,18 +67,18 @@ export const ActionBar: React.FC = () => {
 
   return (
     <div className="grid grid-cols-2 gap-2 p-3 bg-zinc-50 border-b border-zinc-200">
-      {actions.map((act) => {
-        const Icon = act.icon;
+      {actions.map((action) => {
+        const Icon = action.icon;
         return (
           <Button
-            key={act.type}
+            key={action.type}
             disabled={isLoading}
             variant="outline"
-            onClick={() => handleAction(act.type)}
+            onClick={() => handleAction(action.type)}
             className="h-8 justify-center gap-1.5 text-[11px] font-sans font-medium text-zinc-700 bg-white"
           >
             <Icon className="w-3.5 h-3.5 text-zinc-500" />
-            {act.label}
+            {action.label}
           </Button>
         );
       })}
