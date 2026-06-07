@@ -15,19 +15,25 @@ interface DiagnosticsState {
 
 export const useDiagnosticsStore = create<DiagnosticsState>((set) => ({
   logs: [],
+
   addLog: (message, type = 'info') => {
     const timestamp = new Date().toLocaleTimeString();
     set((state) => ({
       logs: [{ timestamp, message, type }, ...state.logs].slice(0, 100)
     }));
   },
-  clearLogs: () => set({ logs: [] })
+
+  clearLogs: () => {
+    set({ logs: [] });
+  }
 }));
 
 const diagnosticsSubs = new Set<() => void>();
 
 export function subscribeDiagnostics(): void {
-  if (diagnosticsSubs.size > 0) return;
+  if (diagnosticsSubs.size > 0) {
+    return;
+  }
 
   diagnosticsSubs.add(
     eventBus.on('tool:start', (data) => {
@@ -37,12 +43,18 @@ export function subscribeDiagnostics(): void {
   diagnosticsSubs.add(
     eventBus.on('tool:result', (data) => {
       const status = data.success ? 'success' : 'error';
-      useDiagnosticsStore.getState().addLog(`Tool ${data.name}: ${data.success ? 'OK' : 'FAIL'} (${data.duration}ms)`, status);
+      useDiagnosticsStore.getState().addLog(
+        `Tool ${data.name}: ${data.success ? 'OK' : 'FAIL'} (${data.duration}ms)`,
+        status
+      );
     })
   );
   diagnosticsSubs.add(
     eventBus.on('agent:status', (data) => {
-      useDiagnosticsStore.getState().addLog(`Agent: ${data.status}${data.role ? ` (${data.role})` : ''}`, 'info');
+      useDiagnosticsStore.getState().addLog(
+        `Agent: ${data.status}${data.role ? ` (${data.role})` : ''}`,
+        'info'
+      );
     })
   );
   diagnosticsSubs.add(
@@ -52,7 +64,10 @@ export function subscribeDiagnostics(): void {
   );
   diagnosticsSubs.add(
     eventBus.on('session:change', (data) => {
-      useDiagnosticsStore.getState().addLog(`Session ${data.action}: ${data.sessionId}`, 'info');
+      useDiagnosticsStore.getState().addLog(
+        `Session ${data.action}: ${data.sessionId}`,
+        'info'
+      );
     })
   );
 }

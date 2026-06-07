@@ -3,11 +3,11 @@ import { create } from 'zustand';
 import type { AgentStatus, AgentStep, Provider, CodeAttachment, AgentRole } from '../../shared/types';
 import { registerBuiltinTools } from '../../shared/tools';
 
-let _toolsRegistered = false;
+let toolsRegistered = false;
 function ensureTools(): void {
-  if (!_toolsRegistered) {
+  if (!toolsRegistered) {
     registerBuiltinTools();
-    _toolsRegistered = true;
+    toolsRegistered = true;
   }
 }
 import { agentOrchestrator } from '../services/agentOrchestrator';
@@ -119,12 +119,14 @@ export const useAgentStore = create<AgentState>((set) => ({
             steps: [...state.steps, step],
             currentStepText: '',
             reasoningText: step.reasoningText !== undefined ? '' : state.reasoningText,
-            status: step.type === 'tool_call' ? ('executing_tools' as AgentStatus) : ('thinking' as AgentStatus),
+            status: step.type === 'tool_call'
+              ? ('executing_tools' as AgentStatus)
+              : ('thinking' as AgentStatus),
           }));
         },
         onDone: async (response: string, usage) => {
           const state = useAgentStore.getState();
-          const content = state.streamingText || response;
+          const content = response || state.streamingText;
 
           // Save session — errors must not break the UI
           try {
@@ -136,7 +138,10 @@ export const useAgentStore = create<AgentState>((set) => ({
                 const chatMessages = useChatStore.getState().messages;
                 sess.status = 'active';
                 await sessionManager.deactivateOtherSessions(sid, sess.id);
-                await sessionManager.updateSessionMessages(sess, chatMessages, state.steps,
+                await sessionManager.updateSessionMessages(
+                  sess,
+                  chatMessages,
+                  state.steps,
                   usage || { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
                 );
               }
