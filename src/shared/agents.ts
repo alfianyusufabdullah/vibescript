@@ -33,7 +33,7 @@ export const AGENT_ROLES: Record<string, AgentRole> = {
 
 ## edit_file rules — read carefully
 
-- The `search` string must appear **exactly once** in the file. If uncertain: read the file first, locate the exact text, then edit.
+- The \`search\` string must appear **exactly once** in the file. If uncertain: read the file first, locate the exact text, then edit.
 - Include **3–5 lines of surrounding context** to guarantee uniqueness — not just the line you want to change.
 - **If edit_file fails:** do NOT retry with the same search string. Read the file again, find the correct text, and retry with more context.
 - Never attempt the same failing edit twice in a row.

@@ -1,7 +1,7 @@
 import type { Tool, ToolDefinition, ToolResult, ToolContext } from './types';
 
 const CACHE_TTL = 30_000; // 30 seconds
-const CACHEABLE_TOOLS = new Set(['read_active_file', 'list_open_files', 'read_file_by_name', 'batch_read_files', 'search_code']);
+const CACHEABLE_TOOL_NAMES = new Set(['read_active_file', 'list_open_files', 'read_file_by_name', 'batch_read_files', 'search_code']);
 const MUTATING_TOOLS = new Set(['edit_file']);
 
 interface CacheEntry {
@@ -50,14 +50,15 @@ export class ToolRegistry {
       return { toolCallId: '', name, success: false, output: '', error: validationError };
     }
 
-    if (CACHEABLE_TOOLS.has(name)) {
+    if (CACHEABLE_TOOL_NAMES.has(name)) {
       const key = this.cacheKey(name, args);
       const cached = this.cache.get(key);
       if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
         return { ...cached.result };
       }
       const result = await tool.execute(args, ctx);
-      if (result.success) {
+      const isEmptyFileList = name === 'list_open_files' && result.output === '[]';
+      if (result.success && !isEmptyFileList) {
         this.cache.set(key, { result, timestamp: Date.now() });
       }
       return result;
@@ -104,12 +105,18 @@ export class ToolRegistry {
 
   private matchesType(value: unknown, expectedType: string): boolean {
     switch (expectedType) {
-      case 'string': return typeof value === 'string';
-      case 'number': return typeof value === 'number';
-      case 'boolean': return typeof value === 'boolean';
-      case 'array': return Array.isArray(value);
-      case 'object': return typeof value === 'object' && !Array.isArray(value) && value !== null;
-      default: return true;
+      case 'string':
+        return typeof value === 'string';
+      case 'number':
+        return typeof value === 'number';
+      case 'boolean':
+        return typeof value === 'boolean';
+      case 'array':
+        return Array.isArray(value);
+      case 'object':
+        return typeof value === 'object' && !Array.isArray(value) && value !== null;
+      default:
+        return true;
     }
   }
 }
