@@ -36,17 +36,25 @@ class AgentMessageBus {
   private channels = new Map<string, Set<AgentMessageHandler>>();
 
   subscribe(channel: string, handler: AgentMessageHandler): () => void {
-    if (!this.channels.has(channel)) this.channels.set(channel, new Set());
+    if (!this.channels.has(channel)) {
+      this.channels.set(channel, new Set());
+    }
     this.channels.get(channel)!.add(handler);
     return () => this.channels.get(channel)?.delete(handler);
   }
 
   publish(from: string, channel: string, payload: unknown): void {
     const handlers = this.channels.get(channel);
-    if (!handlers) return;
+    if (!handlers) {
+      return;
+    }
     const message: AgentBusMessage = { from, channel, payload, timestamp: Date.now() };
     for (const handler of handlers) {
-      try { handler(message); } catch { /* ignore handler errors */ }
+      try {
+        handler(message);
+      } catch {
+        /* ignore handler errors */
+      }
     }
   }
 
@@ -78,7 +86,6 @@ export class AgentOrchestrator {
     const runtime = new AgentRuntime(role);
     const runtimeId = `${role.id}_${this.generateId()}`;
     this.runtimes.set(runtimeId, runtime);
-
     try {
       await runtime.run(prompt, provider, apiKey, model, editorContext, scriptId, callbacks, attachments);
     } finally {
@@ -108,15 +115,22 @@ export class AgentOrchestrator {
 
       runtime
         .run(finalTask, provider, apiKey, model, editorContext, scriptId, {
-          onStep: (step) => { steps.push(step); },
+          onStep: (step) => {
+            steps.push(step);
+          },
           onDone: (response, usage) => {
             this.runtimes.delete(runtimeId);
             let data: unknown;
             if (outputSchema) {
-              const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/) ||
+              const jsonMatch =
+                response.match(/```(?:json)?\s*([\s\S]*?)```/) ||
                 response.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
               if (jsonMatch) {
-                try { data = JSON.parse(jsonMatch[1] || jsonMatch[0]); } catch { /* ignore */ }
+                try {
+                  data = JSON.parse(jsonMatch[1] || jsonMatch[0]);
+                } catch {
+                  /* ignore parse errors — data stays undefined */
+                }
               }
             }
             resolve({ text: response, steps, role: role.id, usage, data });
@@ -125,7 +139,8 @@ export class AgentOrchestrator {
             this.runtimes.delete(runtimeId);
             reject(new Error(error));
           },
-          onStreamingText: () => { /* sub-agent streaming captured via onDone */ },
+          // Sub-agent streaming is not surfaced to the caller; text is captured via onDone.
+          onStreamingText: () => { /* intentionally empty */ },
         })
         .catch((err) => {
           this.runtimes.delete(runtimeId);
@@ -160,7 +175,9 @@ export class AgentOrchestrator {
   }
 
   private generateId(): string {
-    return `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const timestamp = Date.now();
+    const randomSuffix = Math.random().toString(36).substring(2, 9);
+    return `${timestamp}_${randomSuffix}`;
   }
 }
 
