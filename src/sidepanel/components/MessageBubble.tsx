@@ -83,7 +83,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
                 {step.toolCalls.length > 0 && (
                   <div className="space-y-1.5 my-1.5">
                     {step.toolCalls.map((tc, i) => {
-                      const result = step.toolResults.find(r => r.name === tc.name) || step.toolResults[i];
+                      const result = step.toolResults.find((r) => r.name === tc.name) || step.toolResults[i];
                       return (
                         <InlineToolWrapper
                           key={i}
@@ -110,7 +110,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {message.attachments.map((att, idx) => {
-                  const label = att.lineStart ? `${att.filename}:${att.lineStart}-${att.lineEnd}` : att.filename;
+                  const label = att.lineStart
+                    ? `${att.filename}:${att.lineStart}-${att.lineEnd}`
+                    : att.filename;
                   return (
                     <button
                       key={idx}
@@ -152,7 +154,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
             {/* Code Content */}
             <div className="flex-1 overflow-auto p-4 bg-zinc-950 font-mono text-[11px] text-zinc-350 leading-relaxed select-text whitespace-pre">
               {selectedAttachment.content.split('\n').map((line, idx) => {
-                const lineNum = selectedAttachment.lineStart ? selectedAttachment.lineStart + idx : idx + 1;
+                const lineNum = selectedAttachment.lineStart
+                  ? selectedAttachment.lineStart + idx
+                  : idx + 1;
                 return (
                   <div key={idx} className="flex hover:bg-zinc-900/50 px-1 rounded-sm">
                     <span className="text-zinc-600 w-7 select-none text-right pr-2 border-r border-zinc-850 mr-2">
