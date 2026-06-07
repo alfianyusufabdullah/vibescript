@@ -83,8 +83,6 @@ export interface MonacoEditorContext {
   selectedText: string;
 }
 
-// ─── Tool System Types ────────────────────────────────────────────────────
-
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -137,8 +135,6 @@ export interface LLMResponse {
   finishReason: FinishReason;
   usage?: TokenUsage;
 }
-
-// ─── Agent Types ───────────────────────────────────────────────────────────
 
 export interface AgentRole {
   id: string;
