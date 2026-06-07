@@ -1,8 +1,16 @@
 import { create } from 'zustand';
 import type { MonacoEditorContext, CodeAttachment } from '../../shared/types';
+import { DEV_MOCK_FILES, getDevMockContext } from './devMocks';
+import { generateId } from '@/lib/utils';
 
-let _editReviewTimeout: number | undefined;
-let _editReviewHandler: ((event: MessageEvent) => void) | undefined;
+const CODE_FETCH_TIMEOUT_MS = 2000;
+const LIST_FILES_TIMEOUT_MS = 5000;
+const READ_FILE_TIMEOUT_MS = 2000;
+const EDIT_FILE_TIMEOUT_MS = 2000;
+const EDIT_REVIEW_TIMEOUT_MS = 60_000;
+
+let editReviewTimeoutId: number | undefined;
+let editReviewMessageHandler: ((event: MessageEvent) => void) | undefined;
 
 export interface FileInfo {
   name: string;
@@ -26,7 +34,7 @@ interface EditorState {
   scriptId: string | null;
   isActiveTabAppsScript: boolean;
   draftAttachments: CodeAttachment[];
-  
+
   detectActiveTab: () => Promise<void>;
   fetchContext: () => Promise<MonacoEditorContext | null>;
   setCode: (code: string) => Promise<void>;
@@ -43,6 +51,54 @@ interface EditorState {
   clearAttachments: () => void;
 }
 
+function waitForInjectedMessage<T>(
+  sendAction: string,
+  sendPayload: Record<string, unknown>,
+  responseAction: string,
+  timeoutMs: number
+): Promise<T | null> {
+  return new Promise<T | null>((resolve) => {
+    const requestId = generateId();
+    const payload = { ...sendPayload, requestId };
+
+    const handler = (event: MessageEvent) => {
+      if (
+        event.data?.source === 'vibescript-inject' &&
+        event.data?.action === responseAction &&
+        event.data?.payload?.requestId === requestId
+      ) {
+        window.removeEventListener('message', handler);
+        resolve(event.data.payload as T);
+      }
+    };
+
+    window.addEventListener('message', handler);
+
+    window.postMessage(
+      { source: 'vibescript-content', action: sendAction, payload },
+      '*'
+    );
+
+    setTimeout(() => {
+      window.removeEventListener('message', handler);
+      resolve(null);
+    }, timeoutMs);
+  });
+}
+
+function isDuplicateAttachment(
+  existing: CodeAttachment[],
+  attachment: CodeAttachment
+): boolean {
+  return existing.some(
+    (a) =>
+      a.filename === attachment.filename &&
+      a.lineStart === attachment.lineStart &&
+      a.lineEnd === attachment.lineEnd &&
+      a.content === attachment.content
+  );
+}
+
 export const useEditorStore = create<EditorState>((set, get) => ({
   currentContext: null,
   scriptId: null,
@@ -57,7 +113,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
     const url = window.location.href;
     const match = url.match(/\/(?:d|projects)\/([a-zA-Z0-9-_]+)/);
-    
+
     if (url.includes('script.google.com') && match) {
       set({ isActiveTabAppsScript: true, scriptId: match[1] });
     } else {
@@ -67,205 +123,88 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   fetchContext: async () => {
     await get().detectActiveTab();
-    if (!get().isActiveTabAppsScript) return null;
+    if (!get().isActiveTabAppsScript) {
+      return null;
+    }
 
-    const requestId = Math.random().toString(36).substring(7);
+    const result = await waitForInjectedMessage<{ context: MonacoEditorContext | null }>(
+      'GET_CODE',
+      {},
+      'CODE_RESULT',
+      CODE_FETCH_TIMEOUT_MS
+    );
 
-    return new Promise<MonacoEditorContext | null>((resolve) => {
-      const handler = (event: MessageEvent) => {
-        if (
-          event.data?.source === 'vibescript-inject' &&
-          event.data?.action === 'CODE_RESULT' &&
-          event.data?.payload?.requestId === requestId
-        ) {
-          window.removeEventListener('message', handler);
-          const context = event.data.payload.context;
-          if (context) {
-            set({ currentContext: context });
-            resolve(context);
-          } else {
-            resolve(null);
-          }
-        }
-      };
-
-      window.addEventListener('message', handler);
-
-      // Send to injected page-context script
-      window.postMessage({
-        source: 'vibescript-content',
-        action: 'GET_CODE',
-        payload: { requestId }
-      }, '*');
-
-      // 2 second timeout to prevent hanging
-      setTimeout(() => {
-        window.removeEventListener('message', handler);
-        resolve(null);
-      }, 2000);
-    });
+    if (result?.context) {
+      set({ currentContext: result.context });
+      return result.context;
+    }
+    return null;
   },
 
   setCode: async (code: string) => {
-    window.postMessage({
-      source: 'vibescript-content',
-      action: 'SET_CODE',
-      payload: { code }
-    }, '*');
+    window.postMessage(
+      { source: 'vibescript-content', action: 'SET_CODE', payload: { code } },
+      '*'
+    );
   },
 
   insertAtCursor: async (code: string) => {
-    window.postMessage({
-      source: 'vibescript-content',
-      action: 'INSERT_AT_CURSOR',
-      payload: { code }
-    }, '*');
+    window.postMessage(
+      { source: 'vibescript-content', action: 'INSERT_AT_CURSOR', payload: { code } },
+      '*'
+    );
   },
 
   replaceSelection: async (code: string) => {
-    window.postMessage({
-      source: 'vibescript-content',
-      action: 'REPLACE_SELECTION',
-      payload: { code }
-    }, '*');
+    window.postMessage(
+      { source: 'vibescript-content', action: 'REPLACE_SELECTION', payload: { code } },
+      '*'
+    );
   },
 
   listOpenFiles: async () => {
     if (!get().isActiveTabAppsScript) {
-      return [
-        { name: 'Code.gs', language: 'javascript', isActive: true },
-        { name: 'Ui.html', language: 'html', isActive: false },
-        { name: 'Helpers.gs', language: 'javascript', isActive: false },
-      ];
+      return DEV_MOCK_FILES;
     }
 
-    const requestId = Math.random().toString(36).substring(7);
+    const result = await waitForInjectedMessage<{ files: FileInfo[] }>(
+      'LIST_FILES',
+      {},
+      'LIST_FILES_RESULT',
+      LIST_FILES_TIMEOUT_MS
+    );
 
-    return new Promise<FileInfo[]>((resolve) => {
-      const handler = (event: MessageEvent) => {
-        if (
-          event.data?.source === 'vibescript-inject' &&
-          event.data?.action === 'LIST_FILES_RESULT' &&
-          event.data?.payload?.requestId === requestId
-        ) {
-          window.removeEventListener('message', handler);
-          resolve(event.data.payload.files || []);
-        }
-      };
-
-      window.addEventListener('message', handler);
-      window.postMessage({
-        source: 'vibescript-content',
-        action: 'LIST_FILES',
-        payload: { requestId }
-      }, '*');
-
-      setTimeout(() => {
-        window.removeEventListener('message', handler);
-        resolve([]);
-      }, 2000);
-    });
+    return result?.files ?? [];
   },
 
   readFileByName: async (filename: string) => {
     if (!get().isActiveTabAppsScript) {
-      if (filename === 'Code.gs') {
-        return {
-          code: `function doGet() {\n  return HtmlService.createHtmlOutputFromFile('Ui');\n}\n\nfunction getSpreadsheetData() {\n  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();\n  return sheet.getDataRange().getValues();\n}`,
-          filename: 'Code.gs',
-          language: 'javascript',
-          position: null,
-          selection: null,
-          selectedText: ''
-        };
-      }
-      if (filename === 'Ui.html') {
-        return {
-          code: `<!DOCTYPE html>\n<html>\n  <head>\n    <base target="_top">\n  </head>\n  <body>\n    <h1>Hello VibeScript</h1>\n    <script>\n      console.log('App loaded');\n    </script>\n  </body>\n</html>`,
-          filename: 'Ui.html',
-          language: 'html',
-          position: null,
-          selection: null,
-          selectedText: ''
-        };
-      }
-      if (filename === 'Helpers.gs') {
-        return {
-          code: `function formatName(name) {\n  return name ? name.toUpperCase() : 'ANONYMOUS';\n}\n\nfunction logAction(action) {\n  Logger.log('Action performed: ' + action);\n}`,
-          filename: 'Helpers.gs',
-          language: 'javascript',
-          position: null,
-          selection: null,
-          selectedText: ''
-        };
-      }
-      return null;
+      return getDevMockContext(filename);
     }
 
-    const requestId = Math.random().toString(36).substring(7);
+    const result = await waitForInjectedMessage<{ context: MonacoEditorContext | null }>(
+      'READ_FILE_BY_NAME',
+      { filename },
+      'CODE_RESULT',
+      READ_FILE_TIMEOUT_MS
+    );
 
-    return new Promise<MonacoEditorContext | null>((resolve) => {
-      const handler = (event: MessageEvent) => {
-        if (
-          event.data?.source === 'vibescript-inject' &&
-          event.data?.action === 'CODE_RESULT' &&
-          event.data?.payload?.requestId === requestId
-        ) {
-          window.removeEventListener('message', handler);
-          const context = event.data.payload.context;
-          if (context) {
-            resolve(context);
-          } else {
-            resolve(null);
-          }
-        }
-      };
-
-      window.addEventListener('message', handler);
-      window.postMessage({
-        source: 'vibescript-content',
-        action: 'READ_FILE_BY_NAME',
-        payload: { requestId, filename }
-      }, '*');
-
-      setTimeout(() => {
-        window.removeEventListener('message', handler);
-        resolve(null);
-      }, 2000);
-    });
+    return result?.context ?? null;
   },
 
   editFile: async (search: string, replace: string): Promise<EditFileResult> => {
-    const requestId = Math.random().toString(36).substring(7);
+    const result = await waitForInjectedMessage<EditFileResult>(
+      'EDIT_FILE',
+      { search, replace },
+      'EDIT_FILE_RESULT',
+      EDIT_FILE_TIMEOUT_MS
+    );
 
-    return new Promise((resolve) => {
-      const handler = (event: MessageEvent) => {
-        if (
-          event.data?.source === 'vibescript-inject' &&
-          event.data?.action === 'EDIT_FILE_RESULT' &&
-          event.data?.payload?.requestId === requestId
-        ) {
-          window.removeEventListener('message', handler);
-          resolve(event.data.payload);
-        }
-      };
-
-      window.addEventListener('message', handler);
-      window.postMessage({
-        source: 'vibescript-content',
-        action: 'EDIT_FILE',
-        payload: { requestId, search, replace }
-      }, '*');
-
-      setTimeout(() => {
-        window.removeEventListener('message', handler);
-        resolve({ success: false, matchCount: 0, error: 'Timeout' });
-      }, 2000);
-    });
+    return result ?? { success: false, matchCount: 0, error: 'Timeout' };
   },
 
   editFileWithReview: async (search: string, replace: string): Promise<EditFileReviewResult> => {
-    const requestId = Math.random().toString(36).substring(7);
+    const requestId = generateId();
 
     return new Promise((resolve) => {
       const handler = (event: MessageEvent) => {
@@ -274,50 +213,58 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           event.data?.action === 'DIFF_RESULT' &&
           event.data?.payload?.requestId === requestId
         ) {
-          if (_editReviewTimeout) { clearTimeout(_editReviewTimeout); _editReviewTimeout = undefined; }
+          if (editReviewTimeoutId) {
+            clearTimeout(editReviewTimeoutId);
+            editReviewTimeoutId = undefined;
+          }
           window.removeEventListener('message', handler);
-          if (_editReviewHandler === handler) _editReviewHandler = undefined;
+          if (editReviewMessageHandler === handler) {
+            editReviewMessageHandler = undefined;
+          }
           resolve(event.data.payload);
         }
       };
 
-      _editReviewHandler = handler;
+      editReviewMessageHandler = handler;
       window.addEventListener('message', handler);
-      window.postMessage({
-        source: 'vibescript-content',
-        action: 'EDIT_FILE_REVIEW',
-        payload: { requestId, search, replace }
-      }, '*');
+      window.postMessage(
+        {
+          source: 'vibescript-content',
+          action: 'EDIT_FILE_REVIEW',
+          payload: { requestId, search, replace }
+        },
+        '*'
+      );
 
-      _editReviewTimeout = window.setTimeout(() => {
+      editReviewTimeoutId = window.setTimeout(() => {
         window.removeEventListener('message', handler);
-        if (_editReviewHandler === handler) _editReviewHandler = undefined;
-        _editReviewTimeout = undefined;
+        if (editReviewMessageHandler === handler) {
+          editReviewMessageHandler = undefined;
+        }
+        editReviewTimeoutId = undefined;
         resolve({ approved: false, output: 'Timeout' });
-      }, 60000);
+      }, EDIT_REVIEW_TIMEOUT_MS);
     });
   },
 
   cancelDiffReview: () => {
-    if (_editReviewTimeout) { clearTimeout(_editReviewTimeout); _editReviewTimeout = undefined; }
-    if (_editReviewHandler) { window.removeEventListener('message', _editReviewHandler); _editReviewHandler = undefined; }
-    window.postMessage({
-      source: 'vibescript-content',
-      action: 'EDIT_FILE_REVIEW_CANCEL',
-      payload: {}
-    }, '*');
+    if (editReviewTimeoutId) {
+      clearTimeout(editReviewTimeoutId);
+      editReviewTimeoutId = undefined;
+    }
+    if (editReviewMessageHandler) {
+      window.removeEventListener('message', editReviewMessageHandler);
+      editReviewMessageHandler = undefined;
+    }
+    window.postMessage(
+      { source: 'vibescript-content', action: 'EDIT_FILE_REVIEW_CANCEL', payload: {} },
+      '*'
+    );
   },
 
   addAttachment: (attachment: CodeAttachment) => {
     const existing = get().draftAttachments;
-    const isDuplicate = existing.some(
-      (a) =>
-        a.filename === attachment.filename &&
-        a.lineStart === attachment.lineStart &&
-        a.lineEnd === attachment.lineEnd &&
-        a.content === attachment.content
-    );
-    if (!isDuplicate) {
+    if (!isDuplicateAttachment(existing, attachment)) {
       set({ draftAttachments: [...existing, attachment] });
     }
   },
