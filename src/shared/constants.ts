@@ -46,9 +46,8 @@ export const PROVIDERS: Record<Provider, ProviderConfig> = {
   deepseek: {
     name: 'DeepSeek',
     models: [
-      { id: 'deepseek-chat', name: 'DeepSeek-V3' },
-      { id: 'deepseek-coder', name: 'DeepSeek-Coder' },
-      { id: 'deepseek-reasoner', name: 'DeepSeek-R1 (Reasoning)' }
+      { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' },
+      { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro' }
     ],
     defaultModel: 'deepseek-chat',
     contextWindow: 64_000
