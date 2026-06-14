@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Copy, Check, CornerDownLeft, FileText } from 'lucide-react';
 import { Button } from './ui/button';
 import { useEditorStore } from '../stores/editorStore';
@@ -128,11 +129,23 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
     h3: ({ children }) => <h3 className="text-xs font-semibold my-1 text-zinc-900">{children}</h3>,
     strong: ({ children }) => <strong className="font-semibold text-zinc-900">{children}</strong>,
     em: ({ children }) => <em className="italic">{children}</em>,
+    table: ({ children }) => (
+      <div className="overflow-x-auto my-2">
+        <table className="text-xs border-collapse w-full" style={{ tableLayout: 'fixed' }}>
+          {children}
+        </table>
+      </div>
+    ),
+    thead: ({ children }) => <thead className="border-b border-zinc-200 bg-zinc-50">{children}</thead>,
+    tbody: ({ children }) => <tbody>{children}</tbody>,
+    tr: ({ children }) => <tr className="border-b border-zinc-100 last:border-0">{children}</tr>,
+    th: ({ children }) => <th className="text-left px-3 py-1.5 font-semibold text-[11px] text-zinc-700">{children}</th>,
+    td: ({ children }) => <td className="px-3 py-1.5 text-[11px] text-zinc-700 align-top">{children}</td>,
   };
 
   return (
     <div className={className}>
-      <ReactMarkdown components={markdownComponents}>
+      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>
         {content}
       </ReactMarkdown>
     </div>
