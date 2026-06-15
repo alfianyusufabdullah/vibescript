@@ -3,12 +3,12 @@ import type { Tool } from '../types';
 export const editFileTool: Tool = {
   name: 'edit_file',
   description:
-    'Search for exact text in the active editor and replace it. Use for all edits: modifying code, inserting new code (search for anchor text), or deleting code (replace with empty string). This is the primary editing tool.',
+    'Search for exact text in the active editor and replace it. SURGICAL USE ONLY: the replace argument must contain only the lines that actually change — do not regenerate surrounding code that stays the same. For inserting new code: search for the anchor line before the insertion point. For deleting: replace with empty string.',
   parameters: {
     type: 'object',
     properties: {
-      search: { type: 'string', description: 'The exact text to search for in the editor' },
-      replace: { type: 'string', description: 'The replacement text. Use empty string to delete.' },
+      search: { type: 'string', description: 'The exact text to find — must be unique in the file. Include 3–5 lines of context around the changed lines.' },
+      replace: { type: 'string', description: 'Only the lines that change. Do not include unchanged surrounding code.' },
     },
     required: ['search', 'replace'],
   },
@@ -29,12 +29,21 @@ export const editFileTool: Tool = {
     const result = await ctx.editorStore.editFileWithReview(search, replace);
 
     if (result.approved === false) {
+      if (result.output === 'Rejected') {
+        return {
+          toolCallId: '',
+          name: 'edit_file',
+          success: false,
+          output: result.output,
+          error: 'USER_REJECTED',
+        };
+      }
       return {
         toolCallId: '',
         name: 'edit_file',
         success: false,
-        output: result.output,
-        error: 'USER_REJECTED',
+        output: '',
+        error: result.output || 'Edit failed',
       };
     }
 
@@ -48,11 +57,15 @@ export const editFileTool: Tool = {
       };
     }
 
+    const lineCount = replace.split('\n').length;
+    const sizeNote = lineCount > 15
+      ? ` [${lineCount} lines written — next edits should be smaller, one function at a time]`
+      : '';
     return {
       toolCallId: '',
       name: 'edit_file',
       success: true,
-      output: `Applied edit: replaced "${search}" with "${replace}"`,
+      output: `Applied edit successfully.${sizeNote}`,
     };
   },
 };
