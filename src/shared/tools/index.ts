@@ -6,6 +6,7 @@ import { readFileByNameTool } from './read-file-by-name';
 import { finishTool } from './finish';
 import { batchReadFilesTool } from './batch-read-files';
 import { searchCodeTool } from './search-code';
+import { askUserTool } from './ask-user';
 
 export function registerBuiltinTools(): void {
   toolRegistry.register(readActiveFileTool);
@@ -15,4 +16,5 @@ export function registerBuiltinTools(): void {
   toolRegistry.register(finishTool);
   toolRegistry.register(batchReadFilesTool);
   toolRegistry.register(searchCodeTool);
+  toolRegistry.register(askUserTool);
 }
