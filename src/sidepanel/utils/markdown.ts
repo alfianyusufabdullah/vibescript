@@ -74,20 +74,15 @@ function fixIncompleteTable(text: string): string {
   return [...lines.slice(0, tableStart), ...fixed, ...lines.slice(tableEnd + 1)].join('\n');
 }
 
-export function preprocessStreamingMarkdown(text: string, showCursor: boolean = false): string {
-  if (!text) return showCursor ? '▋' : '';
+export function preprocessStreamingMarkdown(text: string): string {
+  if (!text) return '';
 
-  let processed = text;
-  if (showCursor) {
-    processed += '▋';
-  }
-
-  const matches = processed.match(/```/g);
+  const matches = text.match(/```/g);
   const count = matches ? matches.length : 0;
 
   if (count % 2 !== 0) {
-    return processed + '\n```';
+    return text + '\n```';
   }
 
-  return fixIncompleteTable(processed);
+  return fixIncompleteTable(text);
 }
