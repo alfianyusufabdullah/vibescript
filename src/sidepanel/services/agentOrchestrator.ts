@@ -157,6 +157,12 @@ export class AgentOrchestrator {
     return settled.map((r) => (r.status === 'fulfilled' ? r.value : null));
   }
 
+  resolveUserInput(answer: string): void {
+    for (const [, runtime] of this.runtimes) {
+      runtime.resolveUserInput(answer);
+    }
+  }
+
   cancel(roleId?: string): void {
     if (roleId) {
       for (const [id, runtime] of this.runtimes) {
