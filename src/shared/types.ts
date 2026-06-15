@@ -107,6 +107,7 @@ export interface ToolContext {
   };
   cancelDiffReview: () => void;
   signalStop: () => void;
+  requestUserInput: (question: string, options?: string[]) => Promise<string>;
 }
 
 export interface ToolCall {
@@ -146,7 +147,7 @@ export interface AgentRole {
   maxSteps?: number;
 }
 
-export type AgentStatus = 'idle' | 'thinking' | 'executing_tools' | 'done' | 'error' | 'cancelled';
+export type AgentStatus = 'idle' | 'thinking' | 'executing_tools' | 'waiting_for_input' | 'done' | 'error' | 'cancelled';
 
 export interface AgentSession {
   id: string;
