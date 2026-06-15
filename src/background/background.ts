@@ -94,7 +94,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
         const completionMessages: AgentMessage[] = [
           {
             role: 'user',
-            content: `You are an expert coder. Complete the following code at the end of the text. Do not explain, do not add comments, and do not repeat the code prefix. Return ONLY the code to complete.
+            content: `You are an expert Google Apps Script engineer providing inline autocomplete. Continue the code at the end of the prefix. Return ONLY the completion — no explanation, no comments, and do not repeat any of the prefix.
 Code prefix:
 ${prefix}`,
           },
