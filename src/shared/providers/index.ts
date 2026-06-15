@@ -2,4 +2,5 @@ export { type Provider, type ProviderConfig, type GenerateRequest, type StreamRe
 export { OpenAIProvider } from './openai';
 export { AnthropicProvider } from './anthropic';
 export { GeminiProvider } from './gemini';
+export { DeepSeekProvider } from './deepseek';
 export { providerRegistry } from './registry';

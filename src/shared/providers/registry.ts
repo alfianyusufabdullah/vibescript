@@ -2,6 +2,7 @@ import type { Provider, ProviderConfig } from './types';
 import { OpenAIProvider } from './openai';
 import { AnthropicProvider } from './anthropic';
 import { GeminiProvider } from './gemini';
+import { DeepSeekProvider } from './deepseek';
 
 type ProviderFactory = (config: ProviderConfig) => Provider;
 
@@ -39,6 +40,6 @@ export class ProviderRegistry {
 export const providerRegistry = new ProviderRegistry();
 
 providerRegistry.register('openai', (_config) => new OpenAIProvider(_config));
-providerRegistry.register('deepseek', (_config) => new OpenAIProvider({ ..._config, baseUrl: _config.baseUrl || 'https://api.deepseek.com' }));
+providerRegistry.register('deepseek', () => new DeepSeekProvider());
 providerRegistry.register('anthropic', (_config) => new AnthropicProvider(_config));
 providerRegistry.register('gemini', (_config) => new GeminiProvider(_config));
