@@ -5,6 +5,7 @@ const DEFAULT_TEMPERATURE = 0.3;
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const THINKING_BUDGET = 8192;
 const PERMANENT_HTTP_ERROR_CODES = [400, 401, 403, 404];
+const SSE_READ_TIMEOUT = 30_000;
 
 interface GeminiPart {
   text?: string;
@@ -36,6 +37,16 @@ function toGeminiFunctionDeclarations(tools: ToolDefinition[]): Record<string, u
     description: t.description,
     parameters: t.parameters,
   }));
+}
+
+async function readWithTimeout(reader: ReadableStreamDefaultReader<Uint8Array>, ms: number): Promise<ReadableStreamReadResult<Uint8Array>> {
+  const result = await Promise.race([
+    reader.read(),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`SSE read timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+  return result as ReadableStreamReadResult<Uint8Array>;
 }
 
 export class GeminiProvider implements Provider {
@@ -127,7 +138,7 @@ export class GeminiProvider implements Provider {
     let usage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
 
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithTimeout(reader, SSE_READ_TIMEOUT);
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });

@@ -2,9 +2,11 @@ import type { Provider, ProviderConfig, GenerateRequest, StreamRequest, Generate
 import type { ProviderEvent, ToolCall, AgentMessage, ToolDefinition } from '../types';
 
 const ANTHROPIC_API_VERSION = '2023-06-01';
+const ANTHROPIC_API_BETA = 'interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14';
 const DEFAULT_MAX_TOKENS = 4096;
 const PERMANENT_HTTP_ERROR_CODES = [400, 401, 403, 404];
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
+const SSE_READ_TIMEOUT = 30_000;
 
 interface AnthropicContentBlock {
   type: string;
@@ -53,6 +55,16 @@ function toAnthropicTools(tools: ToolDefinition[]): Record<string, unknown>[] {
   }));
 }
 
+async function readWithTimeout(reader: ReadableStreamDefaultReader<Uint8Array>, ms: number): Promise<ReadableStreamReadResult<Uint8Array>> {
+  const result = await Promise.race([
+    reader.read(),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`SSE read timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+  return result as ReadableStreamReadResult<Uint8Array>;
+}
+
 export class AnthropicProvider implements Provider {
   readonly name = 'anthropic';
 
@@ -99,6 +111,7 @@ export class AnthropicProvider implements Provider {
         'Content-Type': 'application/json',
         'x-api-key': config.apiKey,
         'anthropic-version': ANTHROPIC_API_VERSION,
+        'anthropic-beta': ANTHROPIC_API_BETA,
         'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify(payload),
@@ -123,7 +136,7 @@ export class AnthropicProvider implements Provider {
     let inThinkingBlock = false;
 
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithTimeout(reader, SSE_READ_TIMEOUT);
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
@@ -250,6 +263,7 @@ export class AnthropicProvider implements Provider {
         'Content-Type': 'application/json',
         'x-api-key': config.apiKey,
         'anthropic-version': ANTHROPIC_API_VERSION,
+        'anthropic-beta': ANTHROPIC_API_BETA,
         'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify(payload),

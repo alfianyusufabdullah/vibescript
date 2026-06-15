@@ -3,6 +3,7 @@ import type { ProviderEvent, ToolCall, AgentMessage, ToolDefinition } from '../t
 
 const DEFAULT_TEMPERATURE = 0.3;
 const PERMANENT_HTTP_ERROR_CODES = [400, 401, 403, 404];
+const SSE_READ_TIMEOUT = 30_000;
 
 interface OpenAIToolCall {
   id: string;
@@ -39,6 +40,16 @@ function toOpenAITools(tools: ToolDefinition[]): Record<string, unknown>[] {
     type: 'function' as const,
     function: { name: t.name, description: t.description, parameters: t.parameters },
   }));
+}
+
+async function readWithTimeout(reader: ReadableStreamDefaultReader<Uint8Array>, ms: number): Promise<ReadableStreamReadResult<Uint8Array>> {
+  const result = await Promise.race([
+    reader.read(),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`SSE read timed out after ${ms}ms`)), ms)
+    ),
+  ]);
+  return result as ReadableStreamReadResult<Uint8Array>;
 }
 
 export class OpenAIProvider implements Provider {
@@ -102,7 +113,7 @@ export class OpenAIProvider implements Provider {
     let usage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
 
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithTimeout(reader, SSE_READ_TIMEOUT);
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
