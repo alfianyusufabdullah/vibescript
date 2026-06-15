@@ -5,6 +5,7 @@ import { useAgentStore } from '../stores/agentStore';
 import { MessageBubble } from './MessageBubble';
 import { MentionInput } from './MentionInput';
 import { AgentRunningBubble, AgentErrorBubble } from './AgentStatusBubble';
+import { QuestionCard } from './QuestionCard';
 import { SessionPopover } from './SessionPopover';
 import { pairSteps } from '../utils/agent';
 import { Send, Trash2, Code, Sparkles, FileWarning, Loader2, Copy, Check } from 'lucide-react';
@@ -54,9 +55,11 @@ export const ChatView: React.FC = () => {
   const currentRole = useAgentStore((s) => s.currentRole);
   const reasoningText = useAgentStore((s) => s.reasoningText);
   const pendingToolCallName = useAgentStore((s) => s.pendingToolCallName);
+  const pendingQuestion = useAgentStore((s) => s.pendingQuestion);
   const cancelAgent = useAgentStore((s) => s.cancel);
+  const resolveQuestion = useAgentStore((s) => s.resolveQuestion);
 
-  const isAgentRunning = agentStatus === 'thinking' || agentStatus === 'executing_tools';
+  const isAgentRunning = agentStatus === 'thinking' || agentStatus === 'executing_tools' || agentStatus === 'waiting_for_input';
   const [copied, setCopied] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -277,6 +280,15 @@ export const ChatView: React.FC = () => {
           />
         </div>
 
+        {/* Question panel — expands above the chatbox when agent is waiting */}
+        {pendingQuestion && (
+          <QuestionCard
+            question={pendingQuestion.text}
+            options={pendingQuestion.options}
+            onSubmit={resolveQuestion}
+          />
+        )}
+
         {/* Input Card */}
         <div className="flex flex-col bg-zinc-100/50 border border-zinc-200 focus-within:border-zinc-350 focus-within:bg-white rounded-lg overflow-hidden transition-all duration-150 shadow-sm p-2 gap-1.5">
           <MentionInput
@@ -285,7 +297,7 @@ export const ChatView: React.FC = () => {
             onChange={chatInput.handleInputChange}
             onKeyDown={chatInput.handleKeyDown}
             placeholder={isActiveTabAppsScript ? "Ask AI or say 'create a function to...'" : "Connect Apps Script to start coding..."}
-            disabled={!isActiveTabAppsScript && messages.length === 0}
+            disabled={(!isActiveTabAppsScript && messages.length === 0) || !!pendingQuestion}
             className="w-full min-h-[44px] text-xs text-zinc-900 placeholder-zinc-400 focus:outline-none resize-none bg-transparent border-0 p-0"
           />
           <div className="flex items-center justify-between mt-0.5">
@@ -317,7 +329,7 @@ export const ChatView: React.FC = () => {
             </div>
             <Button
               onClick={chatInput.handleSend}
-              disabled={isLoading || !chatInput.draftInput.trim()}
+              disabled={isLoading || !chatInput.draftInput.trim() || !!pendingQuestion}
               size="sm"
               className="h-7 px-3 rounded-md cursor-pointer flex items-center gap-1"
             >
