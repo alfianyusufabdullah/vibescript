@@ -24,6 +24,11 @@ interface ContextInfo {
   attachments?: CodeAttachment[];
 }
 
+interface PendingQuestion {
+  text: string;
+  options?: string[];
+}
+
 interface AgentState {
   status: AgentStatus;
   steps: AgentStep[];
@@ -34,10 +39,12 @@ interface AgentState {
   currentRole: AgentRole | null;
   reasoningText: string;
   pendingToolCallName: string | null;
+  pendingQuestion: PendingQuestion | null;
 
   run: (prompt: string, contextInfo: ContextInfo) => Promise<void>;
   cancel: () => void;
   reset: () => void;
+  resolveQuestion: (answer: string) => void;
 }
 
 export const useAgentStore = create<AgentState>((set) => ({
@@ -50,6 +57,7 @@ export const useAgentStore = create<AgentState>((set) => ({
   currentRole: null,
   reasoningText: '',
   pendingToolCallName: null,
+  pendingQuestion: null,
 
   run: async (prompt: string, contextInfo: ContextInfo) => {
     ensureTools();
@@ -143,6 +151,9 @@ export const useAgentStore = create<AgentState>((set) => ({
           pendingReasoningText = '';
           set({ streamingText: '', currentStepText: '', reasoningText: '' });
         },
+        onQuestion: (question: string, options?: string[]) => {
+          set({ pendingQuestion: { text: question, options }, status: 'waiting_for_input' as AgentStatus });
+        },
         onToolCallStart: (name: string) => {
           // finish is not a real tool execution — the text streamed before it IS the
           // final response, so keep it visible and don't show a pending indicator.
@@ -154,7 +165,9 @@ export const useAgentStore = create<AgentState>((set) => ({
             flushTimerId = null;
           }
           pendingStreamText = '';
-          set({ streamingText: '', currentStepText: '', status: 'executing_tools' as AgentStatus, pendingToolCallName: name });
+          // Keep currentStepText so the pre-tool-call text stays visible during tool execution.
+          // onStep will reset it when the step is recorded.
+          set({ streamingText: '', status: 'executing_tools' as AgentStatus, pendingToolCallName: name });
         },
         onStep: (step: AgentStep) => {
           if (flushTimerId !== null) {
@@ -164,7 +177,10 @@ export const useAgentStore = create<AgentState>((set) => ({
           }
           set((state) => ({
             steps: [...state.steps, step],
-            currentStepText: '',
+            // For text steps (from finish/natural end), keep currentStepText visible
+            // so streaming text stays on screen until onDone clears it. For tool_call
+            // steps, clear immediately to make room for the tool indicator.
+            ...(step.type !== 'text' ? { currentStepText: '' } : {}),
             pendingToolCallName: null,
             reasoningText: step.reasoningText !== undefined ? '' : state.reasoningText,
             status: step.type === 'tool_call'
@@ -203,7 +219,7 @@ export const useAgentStore = create<AgentState>((set) => ({
             console.error('[VibeScript] Failed to save session on done:', err);
           }
 
-          set({ status: 'done', finalResponse: response, currentStepText: '', currentRole: null, pendingToolCallName: null });
+          set({ status: 'done', finalResponse: response, currentStepText: '', currentRole: null, pendingToolCallName: null, pendingQuestion: null });
           useChatStore.getState().addAgentResult(scriptId, content, state.steps);
         },
         onError: (error: string) => {
@@ -212,16 +228,21 @@ export const useAgentStore = create<AgentState>((set) => ({
             flushTimerId = null;
             flushStream();
           }
-          set({ status: 'error', error, currentStepText: '', currentRole: null, pendingToolCallName: null });
+          set({ status: 'error', error, currentStepText: '', currentRole: null, pendingToolCallName: null, pendingQuestion: null });
         },
       },
       attachments
     );
   },
 
+  resolveQuestion: (answer: string) => {
+    agentOrchestrator.resolveUserInput(answer);
+    set({ pendingQuestion: null, status: 'executing_tools' as AgentStatus });
+  },
+
   cancel: () => {
     agentOrchestrator.cancel();
-    set({ status: 'cancelled', currentStepText: '', currentRole: null, pendingToolCallName: null });
+    set({ status: 'cancelled', currentStepText: '', currentRole: null, pendingToolCallName: null, pendingQuestion: null });
   },
 
   reset: () => {
@@ -236,6 +257,7 @@ export const useAgentStore = create<AgentState>((set) => ({
       currentRole: null,
       reasoningText: '',
       pendingToolCallName: null,
+      pendingQuestion: null,
     });
   },
 }));
