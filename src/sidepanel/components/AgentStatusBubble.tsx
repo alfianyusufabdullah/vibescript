@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Sparkles, Loader2, StopCircle, ChevronDown, Brain } from 'lucide-react';
 import { CombinedToolItem } from './ToolExecutionLog';
 import { MarkdownRenderer } from './MarkdownRenderer';
@@ -12,6 +12,7 @@ interface AgentRunningBubbleProps {
   reasoningText: string;
   agentStatus: string;
   currentRole: AgentRole | null;
+  pendingToolCallName: string | null;
   onCancel: () => void;
 }
 
@@ -34,12 +35,13 @@ const ReasoningDetails: React.FC<{ content: string; open?: boolean }> = ({ conte
   </details>
 );
 
-export const AgentRunningBubble: React.FC<AgentRunningBubbleProps> = ({
+export const AgentRunningBubble: React.FC<AgentRunningBubbleProps> = React.memo(({
   pairedAgentSteps,
   currentStepText,
   reasoningText,
   agentStatus,
   currentRole,
+  pendingToolCallName,
   onCancel,
 }) => {
   const sparklesColor =
@@ -50,7 +52,12 @@ export const AgentRunningBubble: React.FC<AgentRunningBubbleProps> = ({
         : 'text-amber-500';
 
   const statusSuffix = agentStatus === 'thinking' ? '(thinking)' : '(executing tools)';
-  const isEmpty = pairedAgentSteps.length === 0 && !currentStepText && !reasoningText;
+  const isEmpty = pairedAgentSteps.length === 0 && !currentStepText && !reasoningText && !pendingToolCallName;
+
+  const processedMarkdown = useMemo(
+    () => preprocessStreamingMarkdown(currentStepText),
+    [currentStepText]
+  );
 
   return (
     <div className="flex flex-col gap-1 w-full animate-fade-in items-start">
@@ -104,21 +111,25 @@ export const AgentRunningBubble: React.FC<AgentRunningBubbleProps> = ({
             {reasoningText && (
               <ReasoningDetails content={reasoningText} open />
             )}
-            {currentStepText && (
-              <MarkdownRenderer content={preprocessStreamingMarkdown(currentStepText, true)} />
-            )}
-            {agentStatus === 'thinking' && !currentStepText && (
-              <div className="flex items-center gap-2 text-zinc-500 text-[11px] py-0.5 font-medium">
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-400" />
-                Thinking...
+            {pendingToolCallName && (
+              <div className="space-y-1.5 my-1.5">
+                <CombinedToolItem
+                  toolCall={{ id: 'pending', name: pendingToolCallName, arguments: {} }}
+                  isComplete={false}
+                  expanded={false}
+                  onToggle={() => {}}
+                />
               </div>
+            )}
+            {currentStepText && (
+              <MarkdownRenderer content={processedMarkdown} showCursor />
             )}
           </>
         )}
       </div>
     </div>
   );
-};
+});
 
 export const AgentErrorBubble: React.FC<AgentErrorBubbleProps> = ({ pairedAgentSteps, agentError, currentRole }) => (
   <div className="flex flex-col gap-1 w-full animate-fade-in items-start">

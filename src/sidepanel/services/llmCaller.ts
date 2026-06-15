@@ -28,6 +28,7 @@ export async function callLLMStreaming(
   apiKey: string,
   onText?: (text: string) => void,
   onReasoning?: (text: string) => void,
+  onToolCallStart?: (name: string) => void,
   isCancelled?: () => boolean
 ): Promise<LLMCallResult | LLMCallError> {
   try {
@@ -49,6 +50,8 @@ export async function callLLMStreaming(
           onReasoning?.(event.delta);
           break;
         case 'tool_call_start':
+          onToolCallStart?.(event.name);
+          break;
         case 'tool_call_delta':
         case 'tool_call_stop':
           break;
@@ -88,6 +91,7 @@ export async function callLLMWithRetry(
     onStreamingText?: (text: string) => void;
     onReasoning?: (text: string) => void;
     onResetStreaming?: () => void;
+    onToolCallStart?: (name: string) => void;
   },
   isCancelled: () => boolean,
   onReasoningReset: () => void
@@ -105,9 +109,11 @@ export async function callLLMWithRetry(
     const streamText = attempt === 0 ? callbacks.onStreamingText : undefined;
     const streamReasoning = attempt === 0 ? callbacks.onReasoning : undefined;
 
-    const result = await callLLMStreaming(provider, model, messages, tools, apiKey, streamText, streamReasoning, isCancelled);
+    const result = await callLLMStreaming(provider, model, messages, tools, apiKey, streamText, streamReasoning, callbacks.onToolCallStart, isCancelled);
 
     if (!isLLMCallError(result)) {
+      // Empty response (no text, no tool calls) — rare with thinking models when the
+      // thinking budget consumes available token capacity. Retry bare after a delay.
       // Empty response (no text, no tool calls) — rare with thinking models when the
       // thinking budget consumes available token capacity. Retry bare after a delay.
       if (!result.text && result.toolCalls.length === 0 && attempt < MAX_RETRIES - 1) {

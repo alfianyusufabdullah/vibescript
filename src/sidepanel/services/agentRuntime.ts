@@ -25,6 +25,7 @@ export interface AgentRuntimeCallbacks {
   onStreamingText?: (text: string) => void;
   onReasoning?: (text: string) => void;
   onResetStreaming?: () => void;
+  onToolCallStart?: (name: string) => void;
 }
 
 export class AgentRuntime {
@@ -271,7 +272,10 @@ export class AgentRuntime {
 
       const modifiedFile = toolResults.some((r) => r.name === 'edit_file' && r.success === true);
       if (modifiedFile) {
-        const fresh = await this.tryReadFile();
+        const fresh = await Promise.race([
+          this.tryReadFile(),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
+        ]);
         if (fresh) {
           const existingIdx = messages.findIndex((m) => m.role === 'user' && m.content.startsWith('[System Context]'));
           if (existingIdx !== -1) messages.splice(existingIdx, 1);

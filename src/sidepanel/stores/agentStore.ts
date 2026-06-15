@@ -33,6 +33,7 @@ interface AgentState {
   currentStepText: string;
   currentRole: AgentRole | null;
   reasoningText: string;
+  pendingToolCallName: string | null;
 
   run: (prompt: string, contextInfo: ContextInfo) => Promise<void>;
   cancel: () => void;
@@ -48,6 +49,7 @@ export const useAgentStore = create<AgentState>((set) => ({
   currentStepText: '',
   currentRole: null,
   reasoningText: '',
+  pendingToolCallName: null,
 
   run: async (prompt: string, contextInfo: ContextInfo) => {
     ensureTools();
@@ -90,6 +92,31 @@ export const useAgentStore = create<AgentState>((set) => ({
       console.error('[VibeScript] Session setup failed (agent will still run):', err);
     }
 
+    // Batched streaming: accumulate text deltas and flush after each event-loop tick.
+    // Uses setTimeout(0) instead of requestAnimationFrame because RAF's ~16ms delay
+    // means fast models can complete within a single frame, showing no streaming at all.
+    let pendingStreamText = '';
+    let pendingReasoningText = '';
+    let flushTimerId: ReturnType<typeof setTimeout> | null = null;
+
+    const flushStream = () => {
+      const stream = pendingStreamText;
+      const reasoning = pendingReasoningText;
+      pendingStreamText = '';
+      pendingReasoningText = '';
+      flushTimerId = null;
+      set((state) => ({
+        ...(stream ? { streamingText: state.streamingText + stream, currentStepText: state.currentStepText + stream } : {}),
+        ...(reasoning ? { reasoningText: state.reasoningText + reasoning } : {}),
+      }));
+    };
+
+    const scheduleFlush = () => {
+      if (flushTimerId === null) {
+        flushTimerId = setTimeout(flushStream, 0);
+      }
+    };
+
     await agentOrchestrator.runAgent(
       role,
       cleanPrompt,
@@ -100,23 +127,45 @@ export const useAgentStore = create<AgentState>((set) => ({
       scriptId,
       {
         onStreamingText: (text: string) => {
-          set((state) => ({
-            streamingText: state.streamingText + text,
-            currentStepText: state.currentStepText + text,
-          }));
+          pendingStreamText += text;
+          scheduleFlush();
         },
         onReasoning: (text: string) => {
-          set((state) => ({
-            reasoningText: state.reasoningText + text,
-          }));
+          pendingReasoningText += text;
+          scheduleFlush();
         },
         onResetStreaming: () => {
+          if (flushTimerId !== null) {
+            clearTimeout(flushTimerId);
+            flushTimerId = null;
+          }
+          pendingStreamText = '';
+          pendingReasoningText = '';
           set({ streamingText: '', currentStepText: '', reasoningText: '' });
         },
+        onToolCallStart: (name: string) => {
+          // finish is not a real tool execution — the text streamed before it IS the
+          // final response, so keep it visible and don't show a pending indicator.
+          if (name === 'finish') return;
+          // For real tools: clear any streaming text (may contain raw tool-call JSON
+          // the model emitted as content) and show a pending spinner immediately.
+          if (flushTimerId !== null) {
+            clearTimeout(flushTimerId);
+            flushTimerId = null;
+          }
+          pendingStreamText = '';
+          set({ streamingText: '', currentStepText: '', status: 'executing_tools' as AgentStatus, pendingToolCallName: name });
+        },
         onStep: (step: AgentStep) => {
+          if (flushTimerId !== null) {
+            clearTimeout(flushTimerId);
+            flushTimerId = null;
+            flushStream();
+          }
           set((state) => ({
             steps: [...state.steps, step],
             currentStepText: '',
+            pendingToolCallName: null,
             reasoningText: step.reasoningText !== undefined ? '' : state.reasoningText,
             status: step.type === 'tool_call'
               ? ('executing_tools' as AgentStatus)
@@ -124,6 +173,11 @@ export const useAgentStore = create<AgentState>((set) => ({
           }));
         },
         onDone: async (response: string, usage) => {
+          if (flushTimerId !== null) {
+            clearTimeout(flushTimerId);
+            flushTimerId = null;
+            flushStream();
+          }
           const state = useAgentStore.getState();
           const content = response || state.streamingText;
 
@@ -149,11 +203,16 @@ export const useAgentStore = create<AgentState>((set) => ({
             console.error('[VibeScript] Failed to save session on done:', err);
           }
 
-          set({ status: 'done', finalResponse: response, currentStepText: '', currentRole: null });
+          set({ status: 'done', finalResponse: response, currentStepText: '', currentRole: null, pendingToolCallName: null });
           useChatStore.getState().addAgentResult(scriptId, content, state.steps);
         },
         onError: (error: string) => {
-          set({ status: 'error', error, currentStepText: '', currentRole: null });
+          if (flushTimerId !== null) {
+            clearTimeout(flushTimerId);
+            flushTimerId = null;
+            flushStream();
+          }
+          set({ status: 'error', error, currentStepText: '', currentRole: null, pendingToolCallName: null });
         },
       },
       attachments
@@ -162,7 +221,7 @@ export const useAgentStore = create<AgentState>((set) => ({
 
   cancel: () => {
     agentOrchestrator.cancel();
-    set({ status: 'cancelled', currentStepText: '', currentRole: null });
+    set({ status: 'cancelled', currentStepText: '', currentRole: null, pendingToolCallName: null });
   },
 
   reset: () => {
@@ -176,6 +235,7 @@ export const useAgentStore = create<AgentState>((set) => ({
       currentStepText: '',
       currentRole: null,
       reasoningText: '',
+      pendingToolCallName: null,
     });
   },
 }));
