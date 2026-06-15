@@ -87,10 +87,6 @@ export class GeminiProvider implements Provider {
     return this.parseResponse(data);
   }
 
-  private isThinkingCapable(model: string): boolean {
-    return /gemini-2\.5/i.test(model);
-  }
-
   async *stream(req: StreamRequest, config: ProviderConfig): AsyncGenerator<ProviderEvent> {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:streamGenerateContent?alt=sse&key=${config.apiKey}`;
     const systemMsg = req.messages.find((m) => m.role === 'system');
@@ -102,7 +98,7 @@ export class GeminiProvider implements Provider {
       maxOutputTokens: config.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     };
 
-    if (this.isThinkingCapable(config.model)) {
+    if (/gemini-(2\.5|3)/i.test(config.model)) {
       generationConfig.thinkingConfig = { includeThoughts: true, thinkingBudget: THINKING_BUDGET };
     }
 

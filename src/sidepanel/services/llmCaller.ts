@@ -8,6 +8,7 @@ export interface LLMCallResult {
   text: string;
   toolCalls: ToolCall[];
   usage?: TokenUsage;
+  reasoningText?: string;
 }
 
 export interface LLMCallError {
@@ -35,6 +36,7 @@ export async function callLLMStreaming(
     let accumulatedText = '';
     let resultToolCalls: ToolCall[] = [];
     let resultUsage: TokenUsage | undefined;
+    let resultReasoningText: string | undefined;
 
     for await (const event of gen) {
       if (isCancelled?.()) break;
@@ -55,10 +57,12 @@ export async function callLLMStreaming(
           break;
         case 'done':
           resultToolCalls = event.toolCalls;
+          resultReasoningText = event.reasoningText;
           return {
             text: event.text || accumulatedText,
             toolCalls: resultToolCalls,
             usage: resultUsage || event.usage,
+            reasoningText: resultReasoningText,
           };
         case 'error':
           return { error: event.error, retriable: event.retriable };

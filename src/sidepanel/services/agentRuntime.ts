@@ -158,7 +158,7 @@ export class AgentRuntime {
         return;
       }
 
-      const { text, toolCalls, usage } = llmResponse;
+      const { text, toolCalls, usage, reasoningText } = llmResponse;
 
       if (usage) {
         this.totalUsage.promptTokens += usage.promptTokens;
@@ -184,6 +184,7 @@ export class AgentRuntime {
         role: 'assistant',
         content: text,
         tool_calls: serializedToolCalls,
+        reasoning_content: reasoningText || undefined,
       };
       messages.push(assistantMsg);
 

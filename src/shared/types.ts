@@ -9,7 +9,7 @@ export type ProviderEvent =
   | { type: 'tool_call_delta'; index: number; delta: string }
   | { type: 'tool_call_stop'; index: number }
   | { type: 'usage'; usage: TokenUsage }
-  | { type: 'done'; finishReason: FinishReason; text: string; toolCalls: ToolCall[]; usage?: TokenUsage }
+  | { type: 'done'; finishReason: FinishReason; text: string; toolCalls: ToolCall[]; usage?: TokenUsage; reasoningText?: string }
   | { type: 'error'; error: string; retriable: boolean };
 
 export interface CodeAttachment {
@@ -180,4 +180,5 @@ export interface AgentMessage {
     function: { name: string; arguments: string };
   }>;
   tool_call_id?: string;
+  reasoning_content?: string;
 }
