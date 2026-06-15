@@ -68,9 +68,17 @@ async function trySummarize(
 
   try {
     const summaryMessages: AgentMessage[] = [
-      { role: 'system', content: 'Summarize the key points from this conversation history concisely.' },
+      {
+        role: 'system',
+        content:
+          'You compact the history of a Google Apps Script coding session so the agent can keep working without the full transcript. Preserve what is needed to resume; drop pleasantries.',
+      },
       ...toSummarize,
-      { role: 'user', content: 'Provide a one-paragraph summary of what was discussed and what was accomplished so far.' },
+      {
+        role: 'user',
+        content:
+          "Summarize the conversation so far in one tight paragraph: the user's goal, decisions made, the files and functions touched, what was completed, and what remains. Keep concrete names verbatim.",
+      },
     ];
 
     const gen = provider.stream(
