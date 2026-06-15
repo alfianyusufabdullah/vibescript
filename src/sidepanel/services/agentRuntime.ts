@@ -15,7 +15,7 @@ const TOOL_TIMEOUT = 10_000;
 const LONG_TOOL_TIMEOUT = 30_000;
 
 const MUTATING_TOOLS = new Set(['edit_file']);
-const NO_TIMEOUT_TOOLS = new Set(['edit_file']);
+const NO_TIMEOUT_TOOLS = new Set(['edit_file', 'ask_user']);
 const LONG_TIMEOUT_TOOL_NAMES = new Set(['search_code', 'batch_read_files', 'list_open_files']);
 
 export interface AgentRuntimeCallbacks {
@@ -26,6 +26,7 @@ export interface AgentRuntimeCallbacks {
   onReasoning?: (text: string) => void;
   onResetStreaming?: () => void;
   onToolCallStart?: (name: string) => void;
+  onQuestion?: (question: string, options?: string[]) => void;
 }
 
 export class AgentRuntime {
@@ -40,12 +41,26 @@ export class AgentRuntime {
   private currentProviderName: ProviderName | null = null;
   private currentModel = '';
   private currentApiKey = '';
+  private pendingInputResolver: ((answer: string) => void) | null = null;
+  private currentCallbacks: AgentRuntimeCallbacks | null = null;
 
   constructor(role?: AgentRole) {
     this.role = role || AGENT_ROLES.build;
   }
 
+  resolveUserInput(answer: string): void {
+    if (this.pendingInputResolver === null) return;
+    const resolve = this.pendingInputResolver;
+    this.pendingInputResolver = null;
+    resolve(answer);
+  }
+
   cancel(): void {
+    if (this.pendingInputResolver !== null) {
+      const resolve = this.pendingInputResolver;
+      this.pendingInputResolver = null;
+      resolve('__CANCELLED__');
+    }
     this.cancelled = true;
     useEditorStore.getState().cancelDiffReview();
   }
@@ -66,6 +81,8 @@ export class AgentRuntime {
     this.totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     this.reasoningText = '';
     this.stopRequested = false;
+    this.pendingInputResolver = null;
+    this.currentCallbacks = callbacks;
     this.contextWindow = PROVIDERS[provider]?.contextWindow || 128_000;
 
     eventBus.emit('agent:status', { status: 'thinking', role: this.role.id });
@@ -419,6 +436,13 @@ ${prompt}
       },
       cancelDiffReview: () => store.cancelDiffReview(),
       signalStop: () => { this.stopRequested = true; },
+      requestUserInput: (question: string, options?: string[]) => {
+        return new Promise<string>((resolve) => {
+          this.pendingInputResolver = resolve;
+          eventBus.emit('agent:status', { status: 'waiting_for_input', role: this.role.id });
+          this.currentCallbacks?.onQuestion?.(question, options);
+        });
+      },
     };
   }
 
