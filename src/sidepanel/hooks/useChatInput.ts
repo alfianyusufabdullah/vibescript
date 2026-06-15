@@ -127,7 +127,7 @@ export function useChatInput({ scriptId, currentContext, textareaRef, agentStatu
   const handleSend = useCallback(async () => {
     const { isLoading } = useChatStore.getState();
     const { status } = useAgentStore.getState();
-    const isAgentRunning = status === 'thinking' || status === 'executing_tools';
+    const isAgentRunning = status === 'thinking' || status === 'executing_tools' || status === 'waiting_for_input';
     if (!draftInput.trim() || isLoading || isAgentRunning) {
       return;
     }
