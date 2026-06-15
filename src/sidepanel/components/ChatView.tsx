@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useMemo } from 'react';
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import { useEditorStore } from '../stores/editorStore';
 import { useAgentStore } from '../stores/agentStore';
@@ -13,6 +13,7 @@ import { useSessionManager } from '../hooks/useSessionManager';
 import { useChatInput } from '../hooks/useChatInput';
 
 const MAX_TEXTAREA_HEIGHT_PX = 120;
+const SCROLL_NEAR_BOTTOM_THRESHOLD = 80;
 
 function formatConversationForExport(messages: ReturnType<typeof useChatStore.getState>['messages']): string {
   return messages.map((message) => {
@@ -46,15 +47,14 @@ function formatConversationForExport(messages: ReturnType<typeof useChatStore.ge
 export const ChatView: React.FC = () => {
   const { messages, isLoading, error, clearHistory } = useChatStore();
   const { currentContext, scriptId, isActiveTabAppsScript, fetchContext } = useEditorStore();
-  const {
-    status: agentStatus,
-    steps: agentSteps,
-    error: agentError,
-    currentStepText,
-    currentRole,
-    reasoningText,
-    cancel: cancelAgent,
-  } = useAgentStore();
+  const agentStatus = useAgentStore((s) => s.status);
+  const agentSteps = useAgentStore((s) => s.steps);
+  const agentError = useAgentStore((s) => s.error);
+  const currentStepText = useAgentStore((s) => s.currentStepText);
+  const currentRole = useAgentStore((s) => s.currentRole);
+  const reasoningText = useAgentStore((s) => s.reasoningText);
+  const pendingToolCallName = useAgentStore((s) => s.pendingToolCallName);
+  const cancelAgent = useAgentStore((s) => s.cancel);
 
   const isAgentRunning = agentStatus === 'thinking' || agentStatus === 'executing_tools';
   const [copied, setCopied] = useState(false);
@@ -67,9 +67,34 @@ export const ChatView: React.FC = () => {
   const sessionMgr = useSessionManager(scriptId, agentStatus);
   const chatInput = useChatInput({ scriptId, currentContext, textareaRef, agentStatus });
 
-  useEffect(() => {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const isNearBottom = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_NEAR_BOTTOM_THRESHOLD;
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: isAgentRunning ? 'instant' : 'smooth' });
-  }, [messages, isLoading, agentSteps, currentStepText, reasoningText, isAgentRunning]);
+  }, [isAgentRunning]);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isLoading, agentSteps, scrollToBottom]);
+
+  useEffect(() => {
+    if (!isAgentRunning) return;
+    let rafId: number;
+    const tick = () => {
+      if (isNearBottom()) {
+        scrollToBottom();
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [isAgentRunning, scrollToBottom, isNearBottom]);
 
   useEffect(() => {
     fetchContext();
@@ -99,7 +124,7 @@ export const ChatView: React.FC = () => {
   return (
     <div className="flex flex-col h-full bg-zinc-50 text-zinc-900 overflow-hidden">
       {/* Message List */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-4">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-4">
         {messages.length === 0 && !isAgentRunning && agentStatus !== 'done' ? (
           <div className="flex flex-col items-center justify-center text-center my-auto px-5 py-8 animate-fade-in">
             <div className="w-10 h-10 rounded-lg bg-white border border-zinc-200 flex items-center justify-center mb-4 shadow-sm">
@@ -132,6 +157,7 @@ export const ChatView: React.FC = () => {
             reasoningText={reasoningText}
             agentStatus={agentStatus}
             currentRole={currentRole}
+            pendingToolCallName={pendingToolCallName}
             onCancel={cancelAgent}
           />
         )}
