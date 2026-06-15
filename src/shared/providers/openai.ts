@@ -31,6 +31,7 @@ interface OpenAIStreamEvent {
         function?: { name?: string; arguments?: string };
       }>;
     };
+    finish_reason?: string;
   }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 }
@@ -137,6 +138,13 @@ export class OpenAIProvider implements Provider {
               if (!accumulatedToolCalls[idx]) {
                 accumulatedToolCalls[idx] = { arguments: '' };
               }
+              const hasId = !!tc.id;
+              const hasName = !!tc.function?.name;
+              if ((hasId || hasName) && !accumulatedToolCalls[idx].name) {
+                if (tc.id) accumulatedToolCalls[idx].id = tc.id;
+                if (tc.function?.name) accumulatedToolCalls[idx].name = tc.function.name;
+                yield { type: 'tool_call_start', index: idx, id: accumulatedToolCalls[idx].id || '', name: accumulatedToolCalls[idx].name || '' };
+              }
               if (tc.id) {
                 accumulatedToolCalls[idx].id = tc.id;
               }
@@ -145,6 +153,15 @@ export class OpenAIProvider implements Provider {
               }
               if (tc.function?.arguments) {
                 accumulatedToolCalls[idx].arguments += tc.function.arguments;
+                yield { type: 'tool_call_delta', index: idx, delta: tc.function.arguments };
+              }
+            }
+          }
+          const chunkFinishReason = parsed.choices?.[0]?.finish_reason;
+          if (chunkFinishReason === 'tool_calls') {
+            for (const idx of Object.keys(accumulatedToolCalls)) {
+              if (accumulatedToolCalls[Number(idx)]?.name) {
+                yield { type: 'tool_call_stop', index: Number(idx) };
               }
             }
           }
@@ -176,7 +193,7 @@ export class OpenAIProvider implements Provider {
         })(),
       }));
 
-    const finishReason = toolCalls.length > 0 ? 'tool_calls' : 'stop';
+    const finishReason: import('../types').FinishReason = toolCalls.length > 0 ? 'tool_calls' : 'stop';
     yield { type: 'done', finishReason, text: accumulatedText, toolCalls, usage };
   }
 
