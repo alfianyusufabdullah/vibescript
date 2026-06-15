@@ -88,7 +88,7 @@ export const AgentRunningBubble: React.FC<AgentRunningBubbleProps> = React.memo(
                 {step.reasoningText && (
                   <ReasoningDetails content={step.reasoningText} open />
                 )}
-                {step.content && <MarkdownRenderer content={step.content} />}
+                {step.content && (step.type !== 'text' || !currentStepText) && <MarkdownRenderer content={step.content} />}
                 {step.toolCalls.length > 0 && (
                   <div className="space-y-1.5 my-1.5">
                     {step.toolCalls.map((tc, i) => {
@@ -111,6 +111,9 @@ export const AgentRunningBubble: React.FC<AgentRunningBubbleProps> = React.memo(
             {reasoningText && (
               <ReasoningDetails content={reasoningText} open />
             )}
+            {currentStepText && (
+              <MarkdownRenderer content={processedMarkdown} showCursor={!pendingToolCallName} />
+            )}
             {pendingToolCallName && (
               <div className="space-y-1.5 my-1.5">
                 <CombinedToolItem
@@ -120,9 +123,6 @@ export const AgentRunningBubble: React.FC<AgentRunningBubbleProps> = React.memo(
                   onToggle={() => {}}
                 />
               </div>
-            )}
-            {currentStepText && (
-              <MarkdownRenderer content={processedMarkdown} showCursor />
             )}
           </>
         )}
