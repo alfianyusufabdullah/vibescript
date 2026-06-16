@@ -10,7 +10,8 @@ function isValidFileName(name) {
   return name &&
     !name.includes('output') &&
     !name.includes('terminal') &&
-    !name.startsWith('inmemory');
+    !name.startsWith('inmemory') &&
+    isNaN(Number(name));
 }
 
 export function setupMessageHandler() {
