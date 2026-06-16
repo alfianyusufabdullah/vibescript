@@ -23,7 +23,7 @@ Background Service Worker (src/background/)
     ↕ chrome.runtime.sendMessage
 Content Script (src/content/content.tsx)   ← injects bridge, creates Shadow DOM, mounts React
     ↕ postMessage (window)
-Injected Script (src/inject/)              ← runs in page context, talks to Monaco editor
+Injected Script (src/content/inject*.js)   ← runs in page context, talks to Monaco editor
     ↑
 Sidepanel React App (src/sidepanel/)       ← UI inside Shadow DOM
 ```
@@ -48,8 +48,9 @@ useAgentStore (src/sidepanel/stores/agentStore.ts)
 Strategy pattern + registry. All providers implement `IProvider`. ProviderEvent stream types: `text_delta`, `reasoning_delta`, `tool_call_start/delta/done`, `usage`, `done`, `error`.
 
 - `anthropic.ts` — native Anthropic SDK
-- `openai.ts` — OpenAI SDK (also used by DeepSeek via `baseUrl` override)
+- `openai.ts` — OpenAI SDK
 - `gemini.ts` — Google GenAI SDK
+- `deepseek.ts` — independent provider, hits `api.deepseek.com` directly via `fetch` (no OpenAI SDK)
 - `registry.ts` — maps `ProviderName` → provider instance
 
 ### Tool Registry (src/shared/toolRegistry.ts)
@@ -61,7 +62,7 @@ Strategy pattern + registry. All providers implement `IProvider`. ProviderEvent 
 
 ### Agent Roles (src/shared/agents.ts)
 
-Three roles, invoked via `@build`, `@explore`, `@plan` prefix in chat:
+Three roles, selected via the mode selector dropdown in the chat input (persisted to `chrome.storage.local`):
 
 | Role | Tools | Purpose |
 |------|-------|---------|

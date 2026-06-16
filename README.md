@@ -12,7 +12,7 @@ VibeScript is a Chrome Extension (MV3) that integrates an agentic AI assistant i
 |---------|-------------|
 | **Multi-provider AI** | Anthropic, OpenAI, Gemini, and DeepSeek — configurable per session |
 | **Agentic loop** | Agent reads files, applies edits, and iterates until the task is complete |
-| **Agent roles** | `@build` (full access), `@explore` (read-only), `@plan` (implementation planning) |
+| **Agent modes** | Build (full access), Explore (read-only), Plan (implementation planning) — selected via dropdown |
 | **Parallel tool execution** | Read-only tools run concurrently; mutating tools run sequentially |
 | **Result caching** | 30-second TTL cache on read tools to eliminate redundant API calls |
 | **Reasoning support** | Collapsible thinking blocks for Anthropic, Gemini, and DeepSeek R1 |
@@ -59,13 +59,15 @@ npm run lint     # Run ESLint
 
 Open any script on `script.google.com` and use the VibeScript side panel:
 
-| Prefix | Agent | Behavior |
-|--------|-------|----------|
-| *(none)* | `@build` | Default — full edit access, executes tasks end-to-end |
-| `@explore` | Explore | Read-only analysis; investigates code without making changes |
-| `@plan` | Plan | Produces a detailed implementation plan before any edits |
+| Mode | Behavior |
+|------|----------|
+| **Build** | Default — full edit access, executes tasks end-to-end |
+| **Explore** | Read-only analysis; investigates code without making changes |
+| **Plan** | Produces a detailed implementation plan before any edits |
 
-You can also attach code snippets or reference specific files directly in your message.
+Select the mode from the dropdown in the chat input. The selection persists across sessions.
+
+Type `@filename` to attach a file from your project as context. You can also select text in the Monaco editor and use the floating pill to attach it directly.
 
 ---
 
@@ -78,7 +80,7 @@ Add your API key via the **Settings** panel inside the extension.
 | Anthropic | Claude 3.5 Sonnet, Claude 3.5 Haiku |
 | OpenAI | GPT-4o, GPT-4o Mini, o3-mini |
 | Google Gemini | Gemini 2.5 Flash, Gemini 2.5 Pro, Gemini 2.0 Flash |
-| DeepSeek | DeepSeek-V3, DeepSeek-Coder, DeepSeek-R1 |
+| DeepSeek | DeepSeek-V4-Flash, DeepSeek-V4-Pro |
 
 ---
 
