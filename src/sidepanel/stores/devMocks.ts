@@ -2,9 +2,9 @@ import type { FileInfo } from './editorStore';
 import type { MonacoEditorContext } from '../../shared/types';
 
 export const DEV_MOCK_FILES: FileInfo[] = [
-  { name: 'Code.gs', language: 'javascript', isActive: true },
-  { name: 'Ui.html', language: 'html', isActive: false },
-  { name: 'Helpers.gs', language: 'javascript', isActive: false },
+  { name: 'Code.gs', language: 'javascript', isActive: true, index: 1 },
+  { name: 'Ui.html', language: 'html', isActive: false, index: 2 },
+  { name: 'Helpers.gs', language: 'javascript', isActive: false, index: 3 },
 ];
 
 const DEV_MOCK_CONTENTS: Record<string, Omit<MonacoEditorContext, 'position' | 'selection' | 'selectedText'>> = {

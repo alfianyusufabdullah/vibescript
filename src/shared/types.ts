@@ -61,7 +61,9 @@ export type MessageAction =
   | 'INJECT_BRIDGE'
   | 'EDIT_FILE'
   | 'EDIT_FILE_RESULT'
-  | 'READ_FILE_BY_NAME';
+  | 'READ_FILE_BY_NAME'
+  | 'OPEN_FILE'
+  | 'OPEN_FILE_RESULT';
 
 export interface ExtensionMessage {
   source: 'vibescript-sidepanel' | 'vibescript-background' | 'vibescript-content' | 'vibescript-inject';
@@ -99,9 +101,10 @@ export interface Tool {
 export interface ToolContext {
   editorStore: {
     fetchContext: () => Promise<MonacoEditorContext | null>;
+    openFile: (filename: string) => Promise<{ success: boolean; context?: { code: string; language: string }; error?: string } | null>;
     editFile: (search: string, replace: string) => Promise<{ success: boolean; matchCount: number; error?: string }>;
     editFileWithReview: (search: string, replace: string) => Promise<{ approved: boolean; output: string }>;
-    listOpenFiles: () => Promise<Array<{ name: string; language: string; isActive: boolean }>>;
+    listOpenFiles: () => Promise<Array<{ name: string; language: string; isActive: boolean; index: number | null }>>;
     readFileByName: (filename: string) => Promise<MonacoEditorContext | null>;
     cancelDiffReview: () => void;
   };
