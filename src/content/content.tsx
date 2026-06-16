@@ -46,7 +46,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
       message.action === 'CODE_RESULT' ||
       message.action === 'DIFF_RESULT' ||
       message.action === 'LIST_FILES_RESULT' ||
-      message.action === 'EDIT_FILE_RESULT'
+      message.action === 'EDIT_FILE_RESULT' ||
+      message.action === 'OPEN_FILE_RESULT'
     ) {
       window.postMessage({
         ...message,
@@ -65,7 +66,8 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
       message.action === 'READ_FILE_BY_NAME' ||
       message.action === 'EDIT_FILE_REVIEW' ||
       message.action === 'EDIT_FILE_REVIEW_CANCEL' ||
-      message.action === 'EDIT_FILE'
+      message.action === 'EDIT_FILE' ||
+      message.action === 'OPEN_FILE'
     ) {
       window.postMessage(message, '*');
     }
@@ -123,7 +125,8 @@ window.addEventListener('message', (event) => {
     'READ_FILE_BY_NAME',
     'EDIT_FILE_REVIEW',
     'EDIT_FILE_REVIEW_CANCEL',
-    'EDIT_FILE'
+    'EDIT_FILE',
+    'OPEN_FILE'
   ];
   if (data.source === 'vibescript-content' && window === window.top) {
     if (sidepanelRequests.includes(data.action)) {

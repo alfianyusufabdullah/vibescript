@@ -14,6 +14,14 @@ function isValidFileName(name) {
     isNaN(Number(name));
 }
 
+function clickFileByIndex(i) {
+  const li = document.querySelector(`li[data-index="${i}"]`);
+  if (!li) return console.warn(`[VibeScript] Index ${i} not found`);
+  li.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  li.dispatchEvent(new MouseEvent('mouseup',   { bubbles: true }));
+  li.dispatchEvent(new MouseEvent('click',     { bubbles: true }));
+}
+
 export function setupMessageHandler() {
   window.addEventListener('message', (event) => {
     if (event.data?.source !== 'vibescript-content') return;
@@ -96,10 +104,12 @@ export function setupMessageHandler() {
               const name = item.getAttribute('aria-label');
               if (name && !name.startsWith('File operations')) {
                 const isSelected = item.getAttribute('aria-selected') === 'true' || item.classList.contains('UeVsd');
+                const dataIndex = item.getAttribute('data-index');
                 files.push({
                   name,
                   language: name.endsWith('.html') || name.endsWith('.htm') ? 'html' : 'javascript',
                   isActive: isSelected,
+                  index: dataIndex !== null ? Number(dataIndex) : null,
                 });
                 if (modelIdx < models.length) {
                   state.fileModelMap.set(name, models[modelIdx]);
@@ -117,13 +127,14 @@ export function setupMessageHandler() {
           const activeModel = activeEditor ? activeEditor.getModel() : null;
           const models = monaco.editor.getModels();
           files = models
-            .map((m) => {
+            .map((m, i) => {
               const path = m.uri.path;
               const name = path.replace(/^\//, '');
               return {
                 name: name || 'untitled',
                 language: m.getLanguageId(),
                 isActive: activeModel ? activeModel.uri.toString() === m.uri.toString() : false,
+                index: i + 1,
               };
             })
             .filter((f) => isValidFileName(f.name));
@@ -275,6 +286,52 @@ export function setupMessageHandler() {
         }
 
         showDiffOverlay(editor, original, modified, range, replace, requestId);
+        break;
+      }
+
+      case 'OPEN_FILE': {
+        if (!monaco) break;
+
+        const { filename: openFilename, requestId: openReqId } = event.data.payload;
+
+        let openTargetModel = state.fileModelMap.get(openFilename);
+        if (!openTargetModel) {
+          const allModels = monaco.editor.getModels();
+          for (const m of allModels) {
+            const name = m.uri.path.replace(/^\//, '');
+            if (name === openFilename) { openTargetModel = m; break; }
+          }
+        }
+
+        if (!openTargetModel) {
+          window.postMessage({
+            source: 'vibescript-inject',
+            action: 'OPEN_FILE_RESULT',
+            payload: { requestId: openReqId, success: false, error: `No Monaco model found for "${openFilename}". Call list_open_files first.` }
+          }, '*');
+          break;
+        }
+
+        if (!editor) {
+          window.postMessage({
+            source: 'vibescript-inject',
+            action: 'OPEN_FILE_RESULT',
+            payload: { requestId: openReqId, success: false, error: 'No active editor' }
+          }, '*');
+          break;
+        }
+
+        editor.setModel(openTargetModel);
+
+        window.postMessage({
+          source: 'vibescript-inject',
+          action: 'OPEN_FILE_RESULT',
+          payload: {
+            requestId: openReqId,
+            success: true,
+            context: { code: openTargetModel.getValue(), language: openTargetModel.getLanguageId() }
+          }
+        }, '*');
         break;
       }
 

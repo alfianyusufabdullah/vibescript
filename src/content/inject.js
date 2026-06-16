@@ -903,6 +903,52 @@ if (window.__vibescript_injected__) {
           }
           break;
         }
+
+        case 'OPEN_FILE': {
+          if (!monaco) break;
+
+          const { filename: openFilename, requestId: openReqId } = event.data.payload;
+
+          let openTargetModel = state.fileModelMap.get(openFilename);
+          if (!openTargetModel) {
+            const allModels = monaco.editor.getModels();
+            for (const m of allModels) {
+              const name = m.uri.path.replace(/^\//, '');
+              if (name === openFilename) { openTargetModel = m; break; }
+            }
+          }
+
+          if (!openTargetModel) {
+            window.postMessage({
+              source: 'vibescript-inject',
+              action: 'OPEN_FILE_RESULT',
+              payload: { requestId: openReqId, success: false, error: `No Monaco model found for "${openFilename}". Call list_open_files first.` },
+            }, '*');
+            break;
+          }
+
+          if (!editor) {
+            window.postMessage({
+              source: 'vibescript-inject',
+              action: 'OPEN_FILE_RESULT',
+              payload: { requestId: openReqId, success: false, error: 'No active editor' },
+            }, '*');
+            break;
+          }
+
+          editor.setModel(openTargetModel);
+
+          window.postMessage({
+            source: 'vibescript-inject',
+            action: 'OPEN_FILE_RESULT',
+            payload: {
+              requestId: openReqId,
+              success: true,
+              context: { code: openTargetModel.getValue(), language: openTargetModel.getLanguageId() },
+            },
+          }, '*');
+          break;
+        }
       }
     });
   }
