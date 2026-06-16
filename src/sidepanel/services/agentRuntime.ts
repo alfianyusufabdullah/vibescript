@@ -428,6 +428,7 @@ ${prompt}
     return {
       editorStore: {
         fetchContext: () => store.fetchContext(),
+        openFile: (filename) => store.openFile(filename),
         editFile: (search, replace) => store.editFile(search, replace),
         editFileWithReview: (search, replace) => store.editFileWithReview(search, replace),
         listOpenFiles: () => store.listOpenFiles(),

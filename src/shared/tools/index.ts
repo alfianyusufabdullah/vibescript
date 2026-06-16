@@ -1,5 +1,6 @@
 import { toolRegistry } from '../toolRegistry';
 import { readActiveFileTool } from './read-active-file';
+import { openFileTool } from './open-file';
 import { editFileTool } from './edit-file';
 import { listOpenFilesTool } from './list-open-files';
 import { readFileByNameTool } from './read-file-by-name';
@@ -10,6 +11,7 @@ import { askUserTool } from './ask-user';
 
 export function registerBuiltinTools(): void {
   toolRegistry.register(readActiveFileTool);
+  toolRegistry.register(openFileTool);
   toolRegistry.register(editFileTool);
   toolRegistry.register(listOpenFilesTool);
   toolRegistry.register(readFileByNameTool);

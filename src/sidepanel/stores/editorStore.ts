@@ -4,6 +4,7 @@ import { DEV_MOCK_FILES, getDevMockContext } from './devMocks';
 import { generateId } from '@/lib/utils';
 
 const CODE_FETCH_TIMEOUT_MS = 2000;
+const OPEN_FILE_TIMEOUT_MS = 5000;
 const LIST_FILES_TIMEOUT_MS = 5000;
 const READ_FILE_TIMEOUT_MS = 2000;
 const EDIT_FILE_TIMEOUT_MS = 2000;
@@ -16,6 +17,7 @@ export interface FileInfo {
   name: string;
   language: string;
   isActive: boolean;
+  index: number | null;
 }
 
 interface EditFileResult {
@@ -27,6 +29,13 @@ interface EditFileResult {
 interface EditFileReviewResult {
   approved: boolean;
   output: string;
+}
+
+interface OpenFileResult {
+  requestId: string;
+  success: boolean;
+  context?: { code: string; language: string };
+  error?: string;
 }
 
 interface EditorState {
@@ -42,6 +51,7 @@ interface EditorState {
   replaceSelection: (code: string) => Promise<void>;
   listOpenFiles: () => Promise<FileInfo[]>;
   readFileByName: (filename: string) => Promise<MonacoEditorContext | null>;
+  openFile: (filename: string) => Promise<OpenFileResult | null>;
   editFile: (search: string, replace: string) => Promise<EditFileResult>;
   editFileWithReview: (search: string, replace: string) => Promise<EditFileReviewResult>;
 
@@ -190,6 +200,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     );
 
     return result?.context ?? null;
+  },
+
+  openFile: async (filename: string): Promise<OpenFileResult | null> => {
+    return waitForInjectedMessage<OpenFileResult>(
+      'OPEN_FILE',
+      { filename },
+      'OPEN_FILE_RESULT',
+      OPEN_FILE_TIMEOUT_MS
+    );
   },
 
   editFile: async (search: string, replace: string): Promise<EditFileResult> => {

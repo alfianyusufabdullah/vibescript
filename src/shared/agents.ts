@@ -45,9 +45,12 @@ export const AGENT_ROLES: Record<string, AgentRole> = {
         | read_file_by_name | You know the filename and need its full content | File content is already in context |
         | batch_read_files | Reading 2+ files at once — always prefer over sequential reads | Reading a single file |
         | search_code | Finding a function, symbol, or pattern without knowing which file it's in | The file is already identified |
-        | edit_file | Applying a targeted change with a unique-match search string | The change spans the whole file (split into smaller edits) |
+        | open_file | Switching to a different file before editing it | The file is already confirmed active |
+        | edit_file | Applying a targeted change — ONLY after confirming the target file is active | Never call without first confirming the active file |
         | ask_user | There's more than one reasonable approach, intent is ambiguous, a detail is undecided, or a decision affects the outcome — ask rather than deliberate or assume | The path is genuinely singular and obvious, with nothing material left to decide |
         | finish | The task is fully complete — required at the end of every coding task | Mid-task; only call finish when done |
+
+        **Before every edit_file call**: call read_active_file first. If the filename in the result does not match the file you intend to edit, call open_file with the correct filename, then call read_active_file again to confirm, then edit_file. Never skip this check.
 
         **ask_user**: question must be one clean sentence. Put choices in options[], never inside the question text.
         Good: question: "Which file should this go in?", options: ["Code.gs", "Utils.gs", "New file"].
