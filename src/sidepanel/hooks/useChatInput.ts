@@ -5,7 +5,7 @@ import { useUiStore } from '../stores/uiStore';
 import { useAgentStore } from '../stores/agentStore';
 import { useChatStore } from '../stores/chatStore';
 import { useSettingsStore } from '../stores/settingsStore';
-import { AGENT_ROLES } from '../../shared/agents';
+import { getAgentRole } from '../../shared/agents';
 
 interface UseChatInputOptions {
   scriptId: string | null;
@@ -79,7 +79,7 @@ async function parseAndFetchMentions(
 
 export function useChatInput({ scriptId, currentContext, textareaRef, agentStatus }: UseChatInputOptions) {
   const { provider, apiKeys, models } = useSettingsStore();
-  const { draftInput, setDraftInput } = useUiStore();
+  const { draftInput, setDraftInput, selectedRole } = useUiStore();
   const { reset: resetAgent } = useAgentStore();
 
   const [showAutocomplete, setShowAutocomplete] = useState(false);
@@ -92,11 +92,6 @@ export function useChatInput({ scriptId, currentContext, textareaRef, agentStatu
     if (!autocompleteQuery) return openFilesList;
     return openFilesList.filter((f) => f.name.toLowerCase().includes(autocompleteQuery.toLowerCase()));
   }, [openFilesList, autocompleteQuery]);
-
-  const filteredAgents = useMemo(() => {
-    if (!autocompleteQuery) return Object.values(AGENT_ROLES);
-    return Object.values(AGENT_ROLES).filter((r) => r.id.toLowerCase().includes(autocompleteQuery.toLowerCase()));
-  }, [autocompleteQuery]);
 
   const fetchOpenFiles = useCallback(async () => {
     const files = await useEditorStore.getState().listOpenFiles();
@@ -146,6 +141,7 @@ export function useChatInput({ scriptId, currentContext, textareaRef, agentStatu
 
     const prompt = draftInput.trim();
     const activeScriptId = scriptId || 'global';
+    const role = getAgentRole(selectedRole);
 
     const finalAttachments = await parseAndFetchMentions(
       prompt,
@@ -162,13 +158,14 @@ export function useChatInput({ scriptId, currentContext, textareaRef, agentStatu
       editorContext: currentContext,
       scriptId: activeScriptId,
       attachments: finalAttachments,
+      role,
     });
 
     setDraftInput('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-  }, [draftInput, provider, apiKeys, models, agentStatus, scriptId, currentContext, textareaRef, setDraftInput, resetAgent]);
+  }, [draftInput, provider, apiKeys, models, agentStatus, scriptId, currentContext, textareaRef, setDraftInput, resetAgent, selectedRole]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (showAutocomplete && filteredFiles.length > 0) {
@@ -222,7 +219,6 @@ export function useChatInput({ scriptId, currentContext, textareaRef, agentStatu
     autocompleteIndex,
     autocompleteTriggerIndex,
     filteredFiles,
-    filteredAgents,
     setDraftInput,
     setShowAutocomplete,
     setAutocompleteIndex,

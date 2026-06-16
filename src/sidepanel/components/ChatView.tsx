@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react'
 import { useChatStore } from '../stores/chatStore';
 import { useEditorStore } from '../stores/editorStore';
 import { useAgentStore } from '../stores/agentStore';
+import { useUiStore } from '../stores/uiStore';
 import { MessageBubble } from './MessageBubble';
 import { MentionInput } from './MentionInput';
 import { AgentRunningBubble, AgentErrorBubble } from './AgentStatusBubble';
@@ -10,8 +11,12 @@ import { SessionPopover } from './SessionPopover';
 import { pairSteps } from '../utils/agent';
 import { Send, Trash2, Code, Sparkles, FileWarning, Loader2, Copy, Check } from 'lucide-react';
 import { Button } from './ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { useSessionManager } from '../hooks/useSessionManager';
 import { useChatInput } from '../hooks/useChatInput';
+import { AGENT_ROLES } from '../../shared/agents';
+
+const AGENT_MODE_OPTIONS = Object.values(AGENT_ROLES).map((r) => ({ id: r.id, label: r.label }));
 
 const MAX_TEXTAREA_HEIGHT_PX = 120;
 const SCROLL_NEAR_BOTTOM_THRESHOLD = 80;
@@ -61,6 +66,7 @@ export const ChatView: React.FC = () => {
 
   const isAgentRunning = agentStatus === 'thinking' || agentStatus === 'executing_tools' || agentStatus === 'waiting_for_input';
   const [copied, setCopied] = useState(false);
+  const { selectedRole, setSelectedRole } = useUiStore();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -194,58 +200,27 @@ export const ChatView: React.FC = () => {
 
       {/* Footer input section */}
       <div className="p-4 bg-white border-t border-zinc-200 flex flex-col gap-2.5 relative">
-        {/* Autocomplete Dropdown */}
-        {chatInput.showAutocomplete && (chatInput.filteredFiles.length > 0 || chatInput.filteredAgents.length > 0) && (
+        {/* Autocomplete Dropdown — files only */}
+        {chatInput.showAutocomplete && chatInput.filteredFiles.length > 0 && (
           <div className="absolute left-0 bottom-[calc(100%+8px)] z-50 w-72 bg-popover border border-border rounded-md shadow-md overflow-hidden max-h-56 overflow-y-auto p-1">
-            {chatInput.filteredAgents.length > 0 && (
-              <>
-                <div className="px-2 py-1.5 text-[9px] font-bold text-muted-foreground uppercase tracking-wider bg-popover">Agents</div>
-                {chatInput.filteredAgents.map((agent, idx) => (
-                  <button
-                    key={agent.id}
-                    type="button"
-                    onClick={() => {
-                      const text = textareaRef.current?.value || '';
-                      const before = text.substring(0, chatInput.autocompleteTriggerIndex);
-                      const after = text.substring(textareaRef.current?.selectionStart || 0);
-                      const newText = `${before}@${agent.id} ${after}`;
-                      chatInput.setDraftInput(newText);
-                      chatInput.setShowAutocomplete(false);
-                    }}
-                    className={`w-full text-left px-2 py-1.5 flex items-center justify-between text-xs transition-colors rounded-sm cursor-pointer ${
-                      idx === chatInput.autocompleteIndex
-                        ? 'bg-accent text-accent-foreground font-medium'
-                        : 'text-foreground hover:bg-accent/50 hover:text-accent-foreground'
-                    }`}
-                  >
-                    <span className="truncate">{agent.label}</span>
-                    <span className="text-[9px] text-muted-foreground truncate max-w-[140px]">{agent.description}</span>
-                  </button>
-                ))}
-              </>
-            )}
-            {chatInput.filteredFiles.length > 0 && (
-              <>
-                <div className="px-2 py-1.5 text-[9px] font-bold text-muted-foreground uppercase tracking-wider bg-popover">Files</div>
-                {chatInput.filteredFiles.map((file, idx) => (
-                  <button
-                    key={file.name}
-                    type="button"
-                    onClick={() => chatInput.selectFile(file.name)}
-                    className={`w-full text-left px-2 py-1.5 flex items-center justify-between text-xs transition-colors rounded-sm cursor-pointer ${
-                      idx === chatInput.autocompleteIndex
-                        ? 'bg-accent text-accent-foreground font-medium'
-                        : 'text-foreground hover:bg-accent/50 hover:text-accent-foreground'
-                    }`}
-                  >
-                    <span className="truncate">{file.name}</span>
-                    {file.isActive && (
-                      <span className="text-[9px] bg-emerald-50 text-emerald-600 border border-emerald-250 px-1.5 py-0.5 rounded font-semibold scale-90">Active</span>
-                    )}
-                  </button>
-                ))}
-              </>
-            )}
+            <div className="px-2 py-1.5 text-[9px] font-bold text-muted-foreground uppercase tracking-wider bg-popover">Files</div>
+            {chatInput.filteredFiles.map((file, idx) => (
+              <button
+                key={file.name}
+                type="button"
+                onClick={() => chatInput.selectFile(file.name)}
+                className={`w-full text-left px-2 py-1.5 flex items-center justify-between text-xs transition-colors rounded-sm cursor-pointer ${
+                  idx === chatInput.autocompleteIndex
+                    ? 'bg-accent text-accent-foreground font-medium'
+                    : 'text-foreground hover:bg-accent/50 hover:text-accent-foreground'
+                }`}
+              >
+                <span className="truncate">{file.name}</span>
+                {file.isActive && (
+                  <span className="text-[9px] bg-emerald-50 text-emerald-600 border border-emerald-250 px-1.5 py-0.5 rounded font-semibold scale-90">Active</span>
+                )}
+              </button>
+            ))}
           </div>
         )}
 
@@ -302,6 +277,19 @@ export const ChatView: React.FC = () => {
           />
           <div className="flex items-center justify-between mt-0.5">
             <div className="flex items-center gap-1">
+              {/* Mode selector */}
+              <Select value={selectedRole} onValueChange={setSelectedRole} disabled={isAgentRunning}>
+                <SelectTrigger className="h-7 w-auto min-w-[90px] px-2 text-[10px] font-medium border-transparent bg-transparent shadow-none hover:bg-zinc-200/60 hover:border-zinc-200 focus:ring-0 focus:ring-offset-0 gap-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {AGENT_MODE_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.id} value={opt.id} className="text-xs">
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               {messages.length > 0 && (
                 <>
                   <Button

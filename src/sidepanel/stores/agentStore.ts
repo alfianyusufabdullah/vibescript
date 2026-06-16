@@ -11,7 +11,7 @@ function ensureTools(): void {
 }
 import { agentOrchestrator } from '../services/agentOrchestrator';
 import { useChatStore } from './chatStore';
-import { resolveAgentFromPrompt } from '../../shared/agents';
+import { AGENT_ROLES } from '../../shared/agents';
 import { sessionManager } from '../services/sessionManager';
 import { useEditorStore } from './editorStore';
 
@@ -22,6 +22,7 @@ interface ContextInfo {
   editorContext: MonacoEditorContext | null;
   scriptId: string;
   attachments?: CodeAttachment[];
+  role?: AgentRole;
 }
 
 interface PendingQuestion {
@@ -62,11 +63,12 @@ export const useAgentStore = create<AgentState>((set) => ({
   run: async (prompt: string, contextInfo: ContextInfo) => {
     ensureTools();
 
-    const { provider, apiKey, model, editorContext, scriptId, attachments } = contextInfo;
+    const { provider, apiKey, model, editorContext, scriptId, attachments, role: contextRole } = contextInfo;
 
     agentOrchestrator.cancel();
 
-    const { role, cleanPrompt } = resolveAgentFromPrompt(prompt);
+    const role = contextRole ?? AGENT_ROLES.build;
+    const cleanPrompt = prompt;
 
     set({
       status: 'thinking',

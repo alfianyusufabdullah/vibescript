@@ -8,12 +8,14 @@ interface UiState {
   activeTab: 'chat' | 'settings';
   draftInput: string;
   panelWidth: number;
+  selectedRole: string;
 
   setPanelOpen: (isOpen: boolean) => void;
   togglePanel: () => void;
   setActiveTab: (tab: 'chat' | 'settings') => void;
   setDraftInput: (input: string) => void;
   setPanelWidth: (width: number) => void;
+  setSelectedRole: (role: string) => void;
   loadUiState: () => Promise<void>;
   insertMention: (filename: string, lineStart?: number, lineEnd?: number) => void;
 }
@@ -23,6 +25,7 @@ interface SavedUiState {
   activeTab?: 'chat' | 'settings';
   draftInput?: string;
   panelWidth?: number;
+  selectedRole?: string;
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
@@ -31,6 +34,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   activeTab: 'chat',
   draftInput: '',
   panelWidth: DEFAULT_PANEL_WIDTH_PX,
+  selectedRole: 'build',
 
   setPanelOpen: (isOpen) => {
     set({ isPanelOpen: isOpen });
@@ -54,6 +58,11 @@ export const useUiStore = create<UiState>((set, get) => ({
 
   setPanelWidth: (width) => {
     set({ panelWidth: width });
+    saveUiState(get());
+  },
+
+  setSelectedRole: (role) => {
+    set({ selectedRole: role });
     saveUiState(get());
   },
 
@@ -81,6 +90,7 @@ export const useUiStore = create<UiState>((set, get) => ({
               activeTab: saved.activeTab ?? 'chat',
               draftInput: saved.draftInput ?? '',
               panelWidth: saved.panelWidth ?? DEFAULT_PANEL_WIDTH_PX,
+              selectedRole: saved.selectedRole ?? 'build',
               initialized: true
             });
           } else {
@@ -102,7 +112,8 @@ function saveUiState(state: UiState) {
         isPanelOpen: state.isPanelOpen,
         activeTab: state.activeTab,
         draftInput: state.draftInput,
-        panelWidth: state.panelWidth
+        panelWidth: state.panelWidth,
+        selectedRole: state.selectedRole,
       }
     });
   }
