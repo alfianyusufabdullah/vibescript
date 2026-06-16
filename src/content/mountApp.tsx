@@ -21,8 +21,6 @@ export function mountApp(): void {
   const reactContainer = document.createElement('div');
   shadowRoot.appendChild(reactContainer);
 
-  // Prevent keyboard events from bubbling to the GAS IDE host page,
-  // which intercepts characters like "/" as editor shortcuts.
   const stopKey = (e: Event) => e.stopPropagation();
   reactContainer.addEventListener('keydown', stopKey);
   reactContainer.addEventListener('keyup', stopKey);
